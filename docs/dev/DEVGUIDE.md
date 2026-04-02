@@ -208,6 +208,16 @@ docker-compose logs -f
 
 ## Работа с базой данных
 
+### Назначение роли администратора
+
+После первичного деплоя и регистрации нужного аккаунта выполнить в Prisma Studio или через SQL:
+
+```sql
+UPDATE "User" SET role = 'ADMIN' WHERE nickname = 'ваш_никнейм';
+```
+
+Или через Prisma Studio: открыть таблицу `User`, найти нужного пользователя, изменить поле `role` на `ADMIN`.
+
 ### Prisma Studio (локально)
 
 ```bash
