@@ -64,6 +64,26 @@
 
 ### WebSocket Events (Socket.io)
 
+#### Формат ошибок WebSocket
+
+Сервер отправляет ошибки через событие `error` на конкретный сокет:
+
+```typescript
+socket.emit('error', { code: string, message: string })
+```
+
+| code | Когда возникает |
+|---|---|
+| `ROOM_NOT_FOUND` | Комната с таким кодом не существует |
+| `ROOM_FULL` | В комнате уже два игрока |
+| `SPECTATORS_FULL` | Достигнут лимит наблюдателей (2) |
+| `NOT_IN_ROOM` | Действие требует нахождения в комнате |
+| `NOT_YOUR_TURN` | Попытка подать/ударить не в свою очередь |
+| `INVALID_PHASE` | Действие недопустимо в текущей фазе игры |
+| `RATE_LIMITED` | Слишком частая отправка сообщений в чат |
+
+---
+
 #### Client → Server
 
 | Событие | Данные | Описание |
@@ -147,5 +167,6 @@ type PlayerState = 'idle' | 'running' | 'hitting' | 'serving'
 - [ ] `bot:started` возвращает имя бота (случайное по уровню сложности) и начальное состояние игры
 - [ ] Удар реализован двухфазно: сначала `game:indicator:show { phase: 'direction' }`, затем `game:indicator:show { phase: 'power' }` — клиент отвечает `game:input:indicator` на каждую фазу
 - [ ] Все Socket.io события реализованы согласно спецификации
+- [ ] Ошибки WebSocket отправляются через событие `error` в формате `{ code, message }`
 - [ ] Типы GameState, Score, PlayerState используются на клиенте и сервере
 - [ ] Admin эндпоинты защищены проверкой роли admin
