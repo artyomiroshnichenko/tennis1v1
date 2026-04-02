@@ -52,7 +52,8 @@
 
 | Событие | Данные | Описание |
 |---|---|---|
-| `room:create` | `{ nickname }` | Создать комнату |
+| `room:create` | `{ nickname }` | Создать онлайн-комнату |
+| `bot:start` | `{ nickname, difficulty: 'easy' \| 'medium' \| 'hard' }` | Начать матч с ботом — создаёт изолированную игровую сессию, без комнаты и кода |
 | `room:join` | `{ code, nickname }` | Войти в комнату по коду |
 | `room:leave` | — | Покинуть комнату |
 | `room:rematch` | — | Запрос на реванш |
@@ -66,7 +67,8 @@
 
 | Событие | Данные | Описание |
 |---|---|---|
-| `room:created` | `{ code, roomId }` | Комната создана, код для приглашения |
+| `room:created` | `{ code, roomId }` | Онлайн-комната создана, код для приглашения |
+| `bot:started` | `{ initialState, botName }` | Бот-матч начался — возвращает имя бота и начальное состояние |
 | `room:joined` | `{ side: 'left' \| 'right', players }` | Подтверждение входа в комнату |
 | `room:full` | — | Комната заполнена |
 | `room:countdown` | `{ seconds }` | Отсчёт перед стартом (15 сек) |
@@ -122,6 +124,8 @@ type PlayerState = 'idle' | 'running' | 'hitting' | 'serving'
 - [ ] Firebase токен верифицируется на /auth/firebase
 - [ ] Гостевая сессия выдаётся на /auth/guest
 - [ ] Эндпоинт /profile/nickname/check возвращает { available: boolean } до сохранения
+- [ ] Бот-матч стартует через `bot:start` — отдельная изолированная сессия без кода комнаты
+- [ ] `bot:started` возвращает имя бота (случайное по уровню сложности) и начальное состояние игры
 - [ ] Удар реализован двухфазно: сначала `game:indicator:show { phase: 'direction' }`, затем `game:indicator:show { phase: 'power' }` — клиент отвечает `game:input:indicator` на каждую фазу
 - [ ] Все Socket.io события реализованы согласно спецификации
 - [ ] Типы GameState, Score, PlayerState используются на клиенте и сервере
