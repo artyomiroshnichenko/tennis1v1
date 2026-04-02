@@ -94,6 +94,25 @@ FIREBASE_PRIVATE_KEY=...
 FIREBASE_CLIENT_EMAIL=...
 ```
 
+### Настройка Firebase Auth (один раз)
+
+1. Открыть [Firebase Console](https://console.firebase.google.com/) → создать проект
+2. Раздел **Authentication** → Sign-in method → включить **Email/Password** и **Phone**
+3. Раздел **Project settings** → вкладка **Service accounts** → Generate new private key → скачать JSON
+4. Из скачанного JSON взять значения и вставить в `server/.env`:
+   - `FIREBASE_PROJECT_ID` — поле `project_id`
+   - `FIREBASE_PRIVATE_KEY` — поле `private_key` (вставлять со всеми `\n`, в кавычках)
+   - `FIREBASE_CLIENT_EMAIL` — поле `client_email`
+5. Для фронтенда создать `client/.env`:
+```
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+```
+   Значения взять из **Project settings** → вкладка **General** → раздел Your apps → Web app config
+
+> Файлы `.env` не коммитятся. Шаблоны хранятся в `.env.example` без реальных значений.
+
 ---
 
 ## Деплой на сервер
@@ -276,4 +295,7 @@ npx prisma migrate reset
 - [ ] Portainer доступен по защищённому URL
 - [ ] Netdata доступен по защищённому URL
 - [ ] Prisma схема определена, первая миграция применена
-- [ ] .env.example создан с документацией всех переменных
+- [ ] .env.example создан с документацией всех переменных (server и client)
+- [ ] Firebase Auth настроен: Email/Password и Phone включены в консоли
+- [ ] Service account JSON получен и значения перенесены в server/.env
+- [ ] Клиентские Firebase-переменные добавлены в client/.env
