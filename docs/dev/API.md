@@ -26,6 +26,7 @@
 | Метод | Путь | Описание |
 |---|---|---|
 | GET | `/profile/me` | Получить свой профиль |
+| GET | `/profile/nickname/check?value=...` | Проверить уникальность никнейма — `{ available: boolean }` |
 | PATCH | `/profile/nickname` | Изменить никнейм |
 
 #### История матчей
@@ -56,7 +57,7 @@
 | `room:leave` | — | Покинуть комнату |
 | `room:rematch` | — | Запрос на реванш |
 | `game:input:move` | `{ dx, dy }` | Направление движения игрока |
-| `game:input:action` | `{ type: 'hit' \| 'serve', value: number }` | Нажатие индикатора (значение 0–1) |
+| `game:input:indicator` | `{ phase: 'direction' \| 'power', value: number }` | Нажатие индикатора удара — фаза и позиция (0–1) |
 | `chat:message` | `{ text }` | Отправить сообщение в чат |
 | `chat:reaction` | `{ type: 'heart' \| 'fire' \| 'cry' \| 'halo' \| 'angry' }` | Отправить реакцию |
 | `spectator:join` | `{ code }` | Подключиться как наблюдатель |
@@ -74,7 +75,7 @@
 | `game:state` | `{ ball, players, score, serving }` | Состояние игры ~60fps |
 | `game:point` | `{ scorer, score, reason }` | Очко засчитано |
 | `game:serve:prompt` | `{ side }` | Приглашение выполнить подачу |
-| `game:indicator` | `{ type: 'direction' \| 'power', phase: 1 \| 2 }` | Показать индикатор удара/подачи |
+| `game:indicator:show` | `{ phase: 'direction' \| 'power' }` | Показать индикатор — клиент запускает анимацию полосы |
 | `game:event` | `{ type: 'ace' \| 'net' \| 'out' \| 'let' \| 'fault' }` | Игровое событие |
 | `game:sides:change` | — | Смена сторон |
 | `game:pause` | `{ reason: 'disconnect', seconds }` | Пауза с обратным отсчётом |
@@ -120,6 +121,8 @@ type PlayerState = 'idle' | 'running' | 'hitting' | 'serving'
 - [ ] JWT авторизация применяется на все защищённые эндпоинты
 - [ ] Firebase токен верифицируется на /auth/firebase
 - [ ] Гостевая сессия выдаётся на /auth/guest
+- [ ] Эндпоинт /profile/nickname/check возвращает { available: boolean } до сохранения
+- [ ] Удар реализован двухфазно: сначала `game:indicator:show { phase: 'direction' }`, затем `game:indicator:show { phase: 'power' }` — клиент отвечает `game:input:indicator` на каждую фазу
 - [ ] Все Socket.io события реализованы согласно спецификации
 - [ ] Типы GameState, Score, PlayerState используются на клиенте и сервере
 - [ ] Admin эндпоинты защищены проверкой роли admin

@@ -197,6 +197,59 @@ npx prisma studio
 # Открывается веб-интерфейс на localhost:5555
 ```
 
+### Базовая схема (schema.prisma)
+
+```prisma
+model User {
+  id        String   @id @default(uuid())
+  firebaseId String? @unique      // null для гостей
+  nickname  String   @unique
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+
+  matches   MatchPlayer[]
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model Match {
+  id          String      @id @default(uuid())
+  type        MatchType
+  status      MatchStatus
+  winnerId    String?
+  sets        Json                         // [[6,3],[4,6],[7,5]]
+  duration    Int?                         // секунды
+  createdAt   DateTime    @default(now())
+  finishedAt  DateTime?
+
+  players     MatchPlayer[]
+}
+
+enum MatchType {
+  ONLINE    // игрок vs игрок
+  BOT       // игрок vs бот
+}
+
+enum MatchStatus {
+  FINISHED
+  TECHNICAL_DEFEAT  // техническое поражение по отключению
+}
+
+model MatchPlayer {
+  id       String  @id @default(uuid())
+  matchId  String
+  userId   String
+  side     String  // 'left' | 'right'
+  isWinner Boolean
+
+  match    Match   @relation(fields: [matchId], references: [id])
+  user     User    @relation(fields: [userId], references: [id])
+}
+```
+
 ### Миграции
 
 ```bash
