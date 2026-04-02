@@ -267,55 +267,184 @@ VITE_FIREBASE_PROJECT_ID=...
 
 ## Деплой на сервер
 
-### Первичная настройка сервера
+Домен: **engbotai.ru**
+
+| Сервис | URL |
+|---|---|
+| Игра | https://engbotai.ru |
+| pgAdmin | https://pgadmin.engbotai.ru |
+| Portainer | https://portainer.engbotai.ru |
+| Netdata | https://netdata.engbotai.ru |
+
+---
+
+### 1. Первичная настройка сервера
+
+Подключиться по SSH к серверу (Ubuntu 22.04+):
+
+```bash
+ssh root@IP_СЕРВЕРА
+```
+
+Установить Docker:
 
 ```bash
 # Установить Docker
 curl -fsSL https://get.docker.com | sh
 
-# Установить docker-compose
-apt install docker-compose-plugin
+# Добавить текущего пользователя в группу docker (если не root)
+usermod -aG docker $USER
+newgrp docker
 
-# Клонировать репозиторий
-git clone git@github.com:...tennis1v1.git /opt/tennis1v1
+# Проверить
+docker -v
+docker compose version
+```
+
+Клонировать репозиторий:
+
+```bash
+git clone git@github.com:artyomiroshnichenko/tennis1v1.git /opt/tennis1v1
 cd /opt/tennis1v1
 ```
 
-### SSL сертификат (Let's Encrypt)
+---
+
+### 2. Настроить DNS
+
+В панели управления Jino (или у любого DNS-провайдера) добавить A-записи:
+
+| Имя | Тип | Значение |
+|---|---|---|
+| `@` | A | IP_СЕРВЕРА |
+| `www` | A | IP_СЕРВЕРА |
+| `pgadmin` | A | IP_СЕРВЕРА |
+| `portainer` | A | IP_СЕРВЕРА |
+| `netdata` | A | IP_СЕРВЕРА |
+
+Проверить что DNS распространился (может занять до 24ч):
+
+```bash
+dig engbotai.ru +short
+# Должен вернуть IP_СЕРВЕРА
+```
+
+---
+
+### 3. Получить SSL сертификат (Let's Encrypt)
 
 ```bash
 # Установить Certbot
-apt install certbot python3-certbot-nginx
+apt install -y certbot
 
-# Получить сертификат
-certbot --nginx -d домен.ru -d www.домен.ru
+# Временно открыть порт 80 (если закрыт)
+# Убедиться что nginx ещё НЕ запущен
 
-# Автообновление — добавляется автоматически в cron
+# Получить wildcard-сертификат через DNS-challenge
+# (покрывает engbotai.ru и все поддомены *.engbotai.ru)
+certbot certonly --standalone \
+  -d engbotai.ru \
+  -d www.engbotai.ru \
+  -d pgadmin.engbotai.ru \
+  -d portainer.engbotai.ru \
+  -d netdata.engbotai.ru \
+  --email admin@engbotai.ru \
+  --agree-tos \
+  --non-interactive
+
+# Скопировать сертификаты туда, где их ожидает nginx
+mkdir -p /opt/tennis1v1/nginx/ssl/engbotai.ru
+cp /etc/letsencrypt/live/engbotai.ru/fullchain.pem /opt/tennis1v1/nginx/ssl/engbotai.ru/
+cp /etc/letsencrypt/live/engbotai.ru/privkey.pem   /opt/tennis1v1/nginx/ssl/engbotai.ru/
 ```
 
-### Запуск в продакшене
+Настроить автообновление:
+
+```bash
+# Certbot добавляет таймер systemd автоматически, проверить:
+systemctl status certbot.timer
+
+# Добавить хук для копирования после обновления
+cat > /etc/letsencrypt/renewal-hooks/deploy/copy-certs.sh << 'EOF'
+#!/bin/bash
+cp /etc/letsencrypt/live/engbotai.ru/fullchain.pem /opt/tennis1v1/nginx/ssl/engbotai.ru/
+cp /etc/letsencrypt/live/engbotai.ru/privkey.pem   /opt/tennis1v1/nginx/ssl/engbotai.ru/
+docker exec tennis1v1_nginx nginx -s reload
+EOF
+chmod +x /etc/letsencrypt/renewal-hooks/deploy/copy-certs.sh
+```
+
+---
+
+### 4. Создать .htpasswd для защиты инструментов
+
+```bash
+apt install -y apache2-utils
+
+# Создать файл с логином/паролем (заменить YOUR_LOGIN и YOUR_PASSWORD)
+htpasswd -bc /opt/tennis1v1/nginx/ssl/.htpasswd YOUR_LOGIN YOUR_PASSWORD
+```
+
+---
+
+### 5. Заполнить переменные окружения
 
 ```bash
 cd /opt/tennis1v1
 
-# Создать .env файл с продакшен переменными
+# Корневой .env (PostgreSQL + pgAdmin)
+cp .env.example .env
+nano .env   # заполнить пароли
+
+# Серверный .env (Firebase, JWT и т.д.)
 cp server/.env.example server/.env
-# Заполнить переменные
+nano server/.env   # заполнить все значения
+
+# Клиентский .env (Firebase Web SDK)
+cp client/.env.example client/.env
+nano client/.env
+```
+
+---
+
+### 6. Собрать клиент и запустить
+
+```bash
+cd /opt/tennis1v1
+
+# Собрать статику клиента
+cd client && npm ci && npm run build && cd ..
 
 # Запустить все сервисы
-docker-compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d
 
 # Применить миграции БД
-docker-compose exec server npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
+
+# Проверить что всё запущено
+docker compose -f docker-compose.prod.yml ps
 ```
 
-### Обновление
+Открыть https://engbotai.ru — игра должна быть доступна.
+
+---
+
+### 7. Обновление после изменений в коде
 
 ```bash
 cd /opt/tennis1v1
+
+# Получить изменения
 git pull
-docker-compose -f docker-compose.prod.yml up -d --build
-docker-compose exec server npx prisma migrate deploy
+
+# Пересобрать клиент если изменился frontend
+cd client && npm ci && npm run build && cd ..
+
+# Пересобрать и перезапустить контейнеры
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Применить миграции если изменилась схема БД
+docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
 ```
 
 ---
@@ -452,9 +581,12 @@ npx prisma migrate reset
 - [ ] SSH-ключ добавлен в GitHub для клонирования по SSH
 - [ ] Локальная разработка поднимается командами из раздела «Первый запуск»
 - [ ] docker-compose.dev.yml настроен для локальной разработки
-- [ ] docker-compose.prod.yml настроен для продакшена
-- [ ] Nginx конфиг настроен: SSL, статика, /api/, /socket.io/
-- [ ] Let's Encrypt сертификат получен и автообновляется
+- [ ] docker-compose.prod.yml настроен для продакшена (server, postgres, pgadmin, portainer, netdata, nginx)
+- [ ] Nginx конфиг настроен: SSL, статика, /api/, /socket.io/, поддомены инструментов
+- [ ] A-записи DNS настроены для engbotai.ru и всех поддоменов
+- [ ] SSL сертификат Let's Encrypt получен и автообновляется через systemd таймер
+- [ ] .htpasswd создан для защиты pgadmin/portainer/netdata
+- [ ] Клиент собран: client/dist заполнен
 - [ ] pgAdmin доступен по защищённому URL
 - [ ] Portainer доступен по защищённому URL
 - [ ] Netdata доступен по защищённому URL
