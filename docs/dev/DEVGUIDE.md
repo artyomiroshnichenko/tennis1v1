@@ -55,32 +55,151 @@ tennis1v1/
 
 ## Локальная разработка
 
-### Требования
-- Node.js 20+
-- Docker + docker-compose
-- Git
+Весь код и все команды выполняются **внутри Linux-окружения** — WSL2 на Windows или Terminal на macOS. На хостовой Windows ничего не устанавливается.
 
-### Первый запуск
+---
+
+### Подготовка машины (один раз)
+
+#### Windows — настройка WSL2
+
+```bash
+# 1. Открыть PowerShell от имени администратора и установить WSL2
+wsl --install
+# Перезагрузить машину. По умолчанию установится Ubuntu.
+
+# 2. Запустить Ubuntu из меню Пуск, создать пользователя.
+
+# 3. Установить Docker Desktop для Windows:
+#    https://www.docker.com/products/docker-desktop/
+#    В настройках Docker Desktop: Settings → Resources → WSL Integration
+#    → включить интеграцию с Ubuntu
+
+# Всё дальнейшее выполняется внутри терминала Ubuntu (WSL2)
+```
+
+Внутри WSL2 (Ubuntu):
+
+```bash
+# Обновить пакеты
+sudo apt update && sudo apt upgrade -y
+
+# Установить nvm (менеджер версий Node.js)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+
+# Установить Node.js 20
+nvm install 20
+nvm use 20
+nvm alias default 20
+
+# Проверить
+node -v   # v20.x.x
+npm -v
+
+# Установить Git (обычно уже есть)
+sudo apt install -y git
+
+# Настроить SSH-ключ для GitHub (если ещё не настроен)
+ssh-keygen -t ed25519 -C "your@email.com"
+cat ~/.ssh/id_ed25519.pub
+# Скопировать вывод → GitHub → Settings → SSH keys → New SSH key
+```
+
+#### macOS — настройка среды
+
+```bash
+# 1. Установить Homebrew (если не установлен)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 2. Установить nvm
+brew install nvm
+# Добавить в ~/.zshrc:
+echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.zshrc
+echo '[ -s "$(brew --prefix)/opt/nvm/nvm.sh" ] && . "$(brew --prefix)/opt/nvm/nvm.sh"' >> ~/.zshrc
+source ~/.zshrc
+
+# 3. Установить Node.js 20
+nvm install 20
+nvm use 20
+nvm alias default 20
+
+# 4. Установить Docker Desktop для Mac:
+#    https://www.docker.com/products/docker-desktop/
+#    Запустить Docker Desktop, дождаться статуса Running.
+
+# Проверить
+node -v   # v20.x.x
+docker -v
+```
+
+---
+
+### Первый запуск проекта (одинаково на обеих машинах)
 
 ```bash
 # Клонировать репозиторий
-git clone git@github.com:...tennis1v1.git
+git clone git@github.com:artyomiroshnichenko/tennis1v1.git
 cd tennis1v1
 
-# Запустить инфраструктуру локально (PostgreSQL)
-docker-compose -f docker-compose.dev.yml up -d
+# Скопировать шаблоны переменных окружения
+cp server/.env.example server/.env
+cp client/.env.example client/.env
+# Заполнить значения в server/.env и client/.env (см. раздел «Переменные окружения»)
 
-# Установить зависимости сервера
-cd server && npm install
+# Запустить PostgreSQL в Docker
+docker compose -f docker-compose.dev.yml up -d
+# Проверить что контейнер запустился:
+docker compose -f docker-compose.dev.yml ps
 
-# Применить миграции БД
+# Установить зависимости и применить миграции БД
+cd server
+npm install
 npx prisma migrate dev
 
-# Запустить сервер
+# Запустить сервер (остаётся в фоне этого терминала)
 npm run dev
 
-# В отдельном терминале — запустить клиент
-cd ../client && npm install && npm run dev
+# В новой вкладке терминала — запустить клиент
+cd ../client
+npm install
+npm run dev
+```
+
+После этого:
+- Клиент доступен на `http://localhost:5173`
+- Сервер работает на `http://localhost:3000`
+- PostgreSQL на `localhost:5432`
+
+---
+
+### Последующие запуски
+
+```bash
+# Терминал 1 — сервер
+cd tennis1v1/server && npm run dev
+
+# Терминал 2 — клиент
+cd tennis1v1/client && npm run dev
+
+# Docker запускается автоматически при старте Docker Desktop.
+# Если контейнер остановлен:
+docker compose -f docker-compose.dev.yml up -d
+```
+
+---
+
+### Переключение между машинами
+
+```bash
+# На новой машине после первого запуска — просто получить последние изменения
+git pull
+
+# Если добавились новые зависимости
+npm install          # в server/ и client/
+
+# Если добавились новые миграции БД
+cd server && npx prisma migrate dev
 ```
 
 ### Переменные окружения
@@ -296,7 +415,11 @@ npx prisma migrate reset
 
 ## Чеклист
 
-- [ ] Локальная разработка поднимается командой из раздела «Первый запуск»
+- [ ] На Windows: WSL2 + Ubuntu установлены, Docker Desktop интегрирован с WSL2
+- [ ] На macOS: Docker Desktop установлен и запущен
+- [ ] Node.js 20 установлен через nvm на обеих машинах
+- [ ] SSH-ключ добавлен в GitHub для клонирования по SSH
+- [ ] Локальная разработка поднимается командами из раздела «Первый запуск»
 - [ ] docker-compose.dev.yml настроен для локальной разработки
 - [ ] docker-compose.prod.yml настроен для продакшена
 - [ ] Nginx конфиг настроен: SSL, статика, /api/, /socket.io/
