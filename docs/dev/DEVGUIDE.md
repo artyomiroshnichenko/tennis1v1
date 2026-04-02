@@ -78,6 +78,22 @@ wsl --install
 # Всё дальнейшее выполняется внутри терминала Ubuntu (WSL2)
 ```
 
+#### Windows — настройка Cursor для работы с WSL2
+
+Cursor должен открывать проект **изнутри WSL**, а не из Windows. Иначе терминал, Git и Node.js будут работать некорректно.
+
+1. Установить Cursor: https://www.cursor.com/
+2. Открыть Cursor → Extensions (`Ctrl+Shift+X`) → найти **WSL** (Microsoft) → Install
+3. Открыть терминал Ubuntu (WSL2) и перейти в папку проекта:
+```bash
+cd ~/projects/tennis1v1
+cursor .
+```
+4. Cursor откроется с WSL-окружением — в левом нижнем углу будет индикатор `WSL: Ubuntu`
+5. Все терминалы внутри Cursor теперь работают в Linux — команды `npm`, `docker`, `git` используют WSL
+
+> ⚠️ Никогда не открывай проект через `File → Open Folder` из Windows-проводника — путь вида `C:\Users\...` сломает все команды.
+
 Внутри WSL2 (Ubuntu):
 
 ```bash
@@ -102,9 +118,20 @@ sudo apt install -y git
 
 # Настроить SSH-ключ для GitHub (если ещё не настроен)
 ssh-keygen -t ed25519 -C "your@email.com"
+# Нажать Enter три раза (путь и пароль по умолчанию)
 cat ~/.ssh/id_ed25519.pub
-# Скопировать вывод → GitHub → Settings → SSH keys → New SSH key
+# Скопировать вывод → GitHub → Settings → SSH keys → New SSH key → вставить → Add
+
+# Проверить что SSH работает
+ssh -T git@github.com
+# Ожидаемый ответ: "Hi username! You've successfully authenticated..."
 ```
+
+#### macOS — настройка Cursor
+
+1. Установить Cursor: https://www.cursor.com/
+2. Установить команду `cursor` в PATH: Cursor → `Cmd+Shift+P` → `Shell Command: Install 'cursor' command in PATH`
+3. Открывать проект из терминала: `cd ~/projects/tennis1v1 && cursor .`
 
 #### macOS — настройка среды
 
@@ -166,10 +193,14 @@ npm install
 npm run dev
 ```
 
-После этого:
-- Клиент доступен на `http://localhost:5173`
-- Сервер работает на `http://localhost:3000`
-- PostgreSQL на `localhost:5432`
+После этого открыть в браузере:
+
+| Сервис | URL | Описание |
+|---|---|---|
+| Клиент (игра) | http://localhost:5173 | Phaser + Vite dev server |
+| Сервер (API) | http://localhost:3000 | Express + Socket.io |
+| PostgreSQL | localhost:5432 | Только для подключений (не браузер) |
+| Prisma Studio | http://localhost:5555 | Запускается отдельно: `npx prisma studio` |
 
 ---
 

@@ -1,4 +1,27 @@
+# Dependencies
 node_modules/
-dist/
+
+# Environment variables — никогда не коммитить
 .env
+server/.env
+client/.env
+
+# Build output
+dist/
+server/dist/
+client/dist/
+
+# Prisma generated client
+server/node_modules/
+
+# Logs
 *.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
