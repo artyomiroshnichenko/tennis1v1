@@ -27,7 +27,7 @@ if ! command -v node &>/dev/null; then
   apt-get install -y nodejs
 fi
 
-npm ci --silent
+npm install --silent
 npm run build
 cd "$APP_DIR"
 echo "✓ Клиент собран → client/dist/"
