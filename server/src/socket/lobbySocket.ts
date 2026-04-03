@@ -181,10 +181,6 @@ export function registerLobbySocket(io: Server): void {
         socketError(socket, msg.error, msg.message)
         return
       }
-      const room = rooms.getRoomBySocket(socket.id)
-      if (room) {
-        io.to(`room:${room.id}`).emit('chat:message', msg)
-      }
     })
 
     socket.on('spectator:join', (payload: { code?: string }) => {

@@ -97,7 +97,7 @@ socket.emit('error', { code: string, message: string })
 | `room:rematch` | — | Запрос на реванш |
 | `game:input:move` | `{ dx, dy }` | Направление движения игрока |
 | `game:input:indicator` | `{ phase: 'direction' \| 'power', value: number }` | Нажатие индикатора удара — фаза и позиция (0–1) |
-| `chat:message` | `{ text }` | Отправить сообщение в чат |
+| `chat:message` | `{ text }` | Сообщение в чат комнаты: лобби (ожидание/отсчёт) и во время матча или на экране результата — всем в комнате, включая наблюдателей |
 | `chat:reaction` | `{ type: 'heart' \| 'fire' \| 'cry' \| 'halo' \| 'angry' }` | Отправить реакцию |
 | `spectator:join` | `{ code }` | Подключиться как наблюдатель (во время матча или на экране результата) |
 
@@ -119,8 +119,8 @@ socket.emit('error', { code: string, message: string })
 | `game:indicator:show` | `{ phase: 'direction' \| 'power' }` | Показать индикатор — клиент запускает анимацию полосы |
 | `game:event` | `{ type: 'ace' \| 'net' \| 'out' \| 'let' \| 'fault' }` | Игровое событие |
 | `game:sides:change` | — | Смена сторон |
-| `game:pause` | `{ reason: 'disconnect', seconds }` | Пауза с обратным отсчётом |
-| `game:resume` | `{}` (или пустое тело) | Матч продолжается; в бот-матче приходит при возврате на вкладку до истечения 15 с |
+| `game:pause` | `{ reason: 'disconnect', seconds, source?: 'peer' \| 'tab' }` | Пауза с обратным отсчётом: `peer` — отключился соперник в онлайн-матче (ожидание до завершения); `tab` — бот-матч, скрыта вкладка |
+| `game:resume` | `{}` (или пустое тело) | Матч продолжается; после паузы `peer` — перед `game:over`; в бот-матче при возврате на вкладку до истечения 15 с |
 | `game:over` | `{ winner, sets, reason, technical? }` | Матч завершён; `technical` — отключение соперника |
 | `room:rematch:state` | `{ youReady, peerReady }` | Согласие на реванш (только игрокам) |
 | `spectator:joined` | `{ players, phase }` | Наблюдатель в комнате; `phase`: `playing` \| `result` |

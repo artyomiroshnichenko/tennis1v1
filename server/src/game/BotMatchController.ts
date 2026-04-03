@@ -211,7 +211,7 @@ export class BotMatchController {
   setVisibilityHidden(hidden: boolean): void {
     if (hidden) {
       this.visibilityDeadlineMs = Date.now() + 15_000
-      this.toPlayer('game:pause', { reason: 'disconnect', seconds: 15 })
+      this.toPlayer('game:pause', { reason: 'disconnect', seconds: 15, source: 'tab' })
     } else {
       this.visibilityDeadlineMs = null
       this.toPlayer('game:resume', {})

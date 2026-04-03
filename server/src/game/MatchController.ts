@@ -12,12 +12,17 @@ export type MatchOverPayload = {
   technical: boolean
 }
 
+const DISCONNECT_GRACE_SEC = 15
+
 export class MatchController {
   private readonly engine: MatchEngine
   private readonly socketToSide = new Map<string, Side>()
   private timer: ReturnType<typeof setInterval> | null = null
   private accum = 0
   private stopped = false
+  private disconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private disconnectPendingWinner: Side | null = null
+  private disconnectFrozen = false
 
   constructor(
     private readonly io: Server,
@@ -52,6 +57,12 @@ export class MatchController {
   private tickReal(): void {
     const now = performance.now()
     if (this.lastTickMs === null) this.lastTickMs = now
+    if (this.disconnectFrozen) {
+      this.lastTickMs = now
+      this.accum = 0
+      this.io.to(this.roomName()).emit('game:state', this.engine.getWireState())
+      return
+    }
     let dt = (now - this.lastTickMs) / 1000
     this.lastTickMs = now
     dt = Math.min(dt, 0.1)
@@ -115,6 +126,13 @@ export class MatchController {
   stop(): void {
     if (this.stopped) return
     this.stopped = true
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer)
+      this.disconnectTimer = null
+      this.io.to(this.roomName()).emit('game:resume', {})
+    }
+    this.disconnectFrozen = false
+    this.disconnectPendingWinner = null
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -144,8 +162,36 @@ export class MatchController {
   forfeitDisconnected(socketId: string): void {
     const side = this.socketToSide.get(socketId)
     if (!side || this.stopped) return
+
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer)
+      this.disconnectTimer = null
+      this.disconnectFrozen = false
+      const winner = this.disconnectPendingWinner
+      this.disconnectPendingWinner = null
+      if (winner) {
+        this.io.to(this.roomName()).emit('game:resume', {})
+        const outs = this.engine.forfeitWinner(winner)
+        for (const e of outs) this.applyEmit(e)
+      }
+      return
+    }
+
     const w: Side = side === 'left' ? 'right' : 'left'
-    const outs = this.engine.forfeitWinner(w)
-    for (const e of outs) this.applyEmit(e)
+    this.disconnectPendingWinner = w
+    this.disconnectFrozen = true
+    this.io.to(this.roomName()).emit('game:pause', {
+      reason: 'disconnect',
+      seconds: DISCONNECT_GRACE_SEC,
+      source: 'peer',
+    })
+    this.disconnectTimer = setTimeout(() => {
+      this.disconnectTimer = null
+      this.disconnectFrozen = false
+      this.disconnectPendingWinner = null
+      this.io.to(this.roomName()).emit('game:resume', {})
+      const outs = this.engine.forfeitWinner(w)
+      for (const e of outs) this.applyEmit(e)
+    }, DISCONNECT_GRACE_SEC * 1000)
   }
 }

@@ -54,8 +54,10 @@ export class RoomManager {
   }
 
   getRoomBySocket(socketId: string): ManagedRoom | undefined {
-    const id = this.socketToRoomId.get(socketId)
-    return id ? this.roomsById.get(id) : undefined
+    const playerRoom = this.socketToRoomId.get(socketId)
+    if (playerRoom) return this.roomsById.get(playerRoom)
+    const specRoom = this.spectatorToRoomId.get(socketId)
+    return specRoom ? this.roomsById.get(specRoom) : undefined
   }
 
   private pruneIpCreates(ip: string): void {
@@ -219,6 +221,7 @@ export class RoomManager {
         this.emitRematchState(r)
       },
     })
+    this.io.to(`room:${r.id}`).emit('spectator:count', { count: r.spectators.length })
   }
 
   createRoom(
@@ -320,7 +323,7 @@ export class RoomManager {
     if (room.phase !== 'playing' && room.phase !== 'result') {
       return {
         error: 'INVALID_PHASE',
-        message: 'Наблюдение доступно во время матча или на экране результата',
+        message: 'Матч ещё не начался. Ожидайте начала.',
       }
     }
     if (room.spectators.length >= MAX_SPECTATORS) {
@@ -448,9 +451,6 @@ export class RoomManager {
     if (!room) {
       return { error: 'NOT_IN_ROOM', message: 'Вы не в комнате' }
     }
-    if (room.phase === 'playing' || room.phase === 'result') {
-      return { error: 'INVALID_PHASE', message: 'Лобби-чат недоступен' }
-    }
     const text = textRaw.trim()
     if (!text) {
       return { error: 'VALIDATION_ERROR', message: 'Пустое сообщение' }
@@ -469,9 +469,13 @@ export class RoomManager {
     }
 
     const player = room.players.find((p) => p.socketId === socketId)
-    const from = player?.nickname ?? '?'
+    const spectator = room.spectators.find((s) => s.socketId === socketId)
+    const from = player?.nickname ?? spectator?.nickname ?? '?'
     const msg: LobbyChatMessage = { from, text, timestamp: now }
-    room.lobbyChat.push(msg)
+    if (room.phase === 'waiting' || room.phase === 'countdown') {
+      room.lobbyChat.push(msg)
+    }
+    this.io.to(`room:${room.id}`).emit('chat:message', msg)
     return msg
   }
 

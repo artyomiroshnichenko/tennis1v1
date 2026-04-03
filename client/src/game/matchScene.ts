@@ -149,6 +149,7 @@ export class MatchScene extends Phaser.Scene {
     sets?: [number, number][]
     technical?: boolean
   }): void => {
+    this.hidePauseOverlay()
     if (!this.opts.spectator) {
       if (p.winner === this.opts.mySide) matchAudio.matchWin()
       else matchAudio.matchLose()
@@ -162,9 +163,11 @@ export class MatchScene extends Phaser.Scene {
     })
   }
 
-  private readonly onGamePause = (p: { reason?: string; seconds?: number }): void => {
+  private readonly onGamePause = (p: { reason?: string; seconds?: number; source?: string }): void => {
     if (p.reason === 'disconnect' && p.seconds !== undefined) {
-      this.showPauseOverlay('Вкладка неактивна — вернитесь, иначе засчитается поражение.', p.seconds)
+      const peerMsg = 'Соперник отключился. Идёт отсчёт до завершения матча.'
+      const tabMsg = 'Вкладка неактивна — вернитесь, иначе засчитается поражение.'
+      this.showPauseOverlay(p.source === 'peer' ? peerMsg : tabMsg, p.seconds)
     }
   }
 
@@ -331,6 +334,9 @@ export class MatchScene extends Phaser.Scene {
       sock.on('game:pause', this.onGamePause)
       sock.on('game:resume', this.onGameResume)
       sock.on('bot:pause:state', this.onBotPauseState)
+    } else {
+      sock.on('game:pause', this.onGamePause)
+      sock.on('game:resume', this.onGameResume)
     }
 
     if (!this.opts.spectator) {

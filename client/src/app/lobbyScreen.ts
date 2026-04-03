@@ -54,6 +54,78 @@ function formatWait(ms: number): string {
   return `${m}:${r.toString().padStart(2, '0')}`
 }
 
+function updateSpectatorCountBadge(gameEl: HTMLElement, count: number): void {
+  let el = gameEl.querySelector('#spectator-count-badge') as HTMLElement | null
+  if (count <= 0) {
+    el?.remove()
+    return
+  }
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 'spectator-count-badge'
+    el.style.cssText =
+      'position:absolute;top:48px;right:12px;z-index:50;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;background:rgba(20,20,40,0.9);color:#c8c8e0;font:14px system-ui,sans-serif;'
+    el.setAttribute('aria-live', 'polite')
+    el.title = 'Наблюдатели в комнате'
+    gameEl.appendChild(el)
+  }
+  el.textContent = `👁 ${count}`
+}
+
+function removeSpectatorCountBadge(gameEl: HTMLElement): void {
+  gameEl.querySelector('#spectator-count-badge')?.remove()
+}
+
+/** Чат комнаты для зрителя (игра / экран результата). */
+function mountSpectatorRoomChat(gameEl: HTMLElement, sock: Socket): () => void {
+  const wrap = document.createElement('div')
+  wrap.className = 'spectator-room-chat'
+  wrap.style.cssText =
+    'position:absolute;left:8px;bottom:8px;right:auto;max-width:min(320px,calc(100% - 16px));z-index:45;display:flex;flex-direction:column;gap:6px;pointer-events:auto'
+  const msgs = document.createElement('div')
+  msgs.style.cssText =
+    'max-height:min(120px,22vh);overflow-y:auto;font:12px system-ui;background:rgba(20,20,40,0.88);border-radius:8px;padding:8px;color:#c8c8e0;border:1px solid #3a3a55'
+  const row = document.createElement('div')
+  row.style.cssText = 'display:flex;gap:6px;align-items:center'
+  const inp = document.createElement('input')
+  inp.type = 'text'
+  inp.maxLength = 500
+  inp.placeholder = 'Сообщение в комнату…'
+  inp.autocomplete = 'off'
+  inp.style.cssText =
+    'flex:1;min-width:0;padding:6px 8px;border-radius:6px;border:1px solid #4a4a68;background:#1a1a2e;color:#e8e8f0;font:13px system-ui'
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'btn-primary'
+  btn.textContent = 'Отпр.'
+  btn.style.cssText = 'padding:6px 10px;font:13px system-ui;flex-shrink:0'
+  const send = (): void => {
+    const t = inp.value.trim()
+    if (!t) return
+    sock.emit('chat:message', { text: t })
+    inp.value = ''
+  }
+  btn.addEventListener('click', send)
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') send()
+  })
+  const onChat = (msg: ChatLine): void => {
+    const line = document.createElement('div')
+    line.style.cssText = 'margin-bottom:4px;word-break:break-word'
+    line.textContent = `${msg.from}: ${msg.text}`
+    msgs.appendChild(line)
+    msgs.scrollTop = msgs.scrollHeight
+  }
+  sock.on('chat:message', onChat)
+  row.append(inp, btn)
+  wrap.append(msgs, row)
+  gameEl.appendChild(wrap)
+  return () => {
+    sock.off('chat:message', onChat)
+    wrap.remove()
+  }
+}
+
 function whenConnected(sock: Socket, fn: () => void): void {
   if (sock.connected) fn()
   else sock.once('connect', fn)
@@ -103,10 +175,15 @@ function mountLobbyShell(
     <p class="lobby-wait">Ожидание соперника: <strong id="lobby-wait-dur">0:00</strong></p>
     <div class="lobby-countdown" id="lobby-countdown" style="display:none"></div>
     <div class="lobby-invite" id="lobby-invite-wrap" style="display:none">
-      <label>Приглашение</label>
+      <label>Приглашение игроку</label>
       <div class="row">
         <code id="lobby-invite-url"></code>
         <button type="button" class="btn-icon" id="lobby-copy">Копировать</button>
+      </div>
+      <label style="margin-top:10px">Ссылка для зрителя</label>
+      <div class="row">
+        <code id="lobby-invite-watch-url"></code>
+        <button type="button" class="btn-icon" id="lobby-copy-watch">Копировать</button>
       </div>
     </div>
     <div class="lobby-players" id="lobby-players"></div>
@@ -124,6 +201,7 @@ function mountLobbyShell(
   const waitEl = root.querySelector('#lobby-wait-dur') as HTMLElement
   const inviteWrap = root.querySelector('#lobby-invite-wrap') as HTMLElement
   const inviteUrlEl = root.querySelector('#lobby-invite-url') as HTMLElement
+  const inviteWatchUrlEl = root.querySelector('#lobby-invite-watch-url') as HTMLElement
   const playersEl = root.querySelector('#lobby-players') as HTMLElement
   const countdownEl = root.querySelector('#lobby-countdown') as HTMLElement
   const msgsEl = root.querySelector('#lobby-msgs') as HTMLElement
@@ -144,6 +222,15 @@ function mountLobbyShell(
 
   root.querySelector('#lobby-copy')?.addEventListener('click', async () => {
     const t = inviteUrlEl.textContent ?? ''
+    try {
+      await navigator.clipboard.writeText(t)
+    } catch {
+      /* ignore */
+    }
+  })
+
+  root.querySelector('#lobby-copy-watch')?.addEventListener('click', async () => {
+    const t = inviteWatchUrlEl.textContent ?? ''
     try {
       await navigator.clipboard.writeText(t)
     } catch {
@@ -198,6 +285,10 @@ function mountLobbyShell(
       const u = new URL(window.location.href)
       u.searchParams.set('room', c)
       inviteUrlEl.textContent = u.toString()
+      const uw = new URL(window.location.href)
+      uw.searchParams.set('room', c)
+      uw.searchParams.set('watch', '1')
+      inviteWatchUrlEl.textContent = uw.toString()
       setRoomQueryParam(c)
     },
     setPlayers: setPlayersSafe,
@@ -235,6 +326,7 @@ function wireLobbySocket(
   let rematchHintEl: HTMLParagraphElement | null = null
 
   const goToMenuFromGame = (gameEl: HTMLElement): void => {
+    removeSpectatorCountBadge(gameEl)
     sock.emit('room:leave')
     disconnectGameSocket()
     gameEl.style.display = 'none'
@@ -253,6 +345,13 @@ function wireLobbySocket(
 
   sock.on('connect_error', () => {
     ui.setErr('Не удалось подключиться к серверу')
+  })
+
+  sock.on('spectator:count', (p: { count?: number }) => {
+    const n = typeof p.count === 'number' ? p.count : 0
+    const gameEl = document.getElementById(gameRootId)
+    if (!gameEl || gameEl.style.display === 'none') return
+    updateSpectatorCountBadge(gameEl, n)
   })
 
   sock.on('room:created', (payload: { code: string }) => {
@@ -533,6 +632,16 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
   disconnectGameSocket()
   const sock = getGameSocket(token)
 
+  let joinRetryTimer: ReturnType<typeof setInterval> | null = null
+  let removeRoomChat: (() => void) | null = null
+
+  const clearJoinRetry = (): void => {
+    if (joinRetryTimer) {
+      clearInterval(joinRetryTimer)
+      joinRetryTimer = null
+    }
+  }
+
   const clearWatchParam = (): void => {
     const u = new URL(window.location.href)
     u.searchParams.delete('watch')
@@ -540,8 +649,12 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
   }
 
   const tearDown = (): void => {
+    clearJoinRetry()
+    removeRoomChat?.()
+    removeRoomChat = null
     destroyGame()
     disconnectGameSocket()
+    removeSpectatorCountBadge(gameRoot)
     gameRoot.innerHTML = ''
     gameRoot.style.display = 'none'
     setGameBackVisible(false)
@@ -564,6 +677,25 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
     backBtn.style.display = 'block'
     return backBtn
   }
+
+  const waitPanelStyle =
+    'min-height:160px;display:flex;align-items:center;justify-content:center;padding:24px;color:#c8c8e0;font:16px system-ui,sans-serif;text-align:center;max-width:28rem;margin:0 auto'
+
+  gameRoot.innerHTML = ''
+  gameRoot.style.display = 'block'
+  gameRoot.style.position = 'relative'
+  const bootWait = document.createElement('div')
+  bootWait.className = 'spectator-wait-panel'
+  bootWait.style.cssText = waitPanelStyle
+  bootWait.textContent = 'Подключение к комнате…'
+  gameRoot.appendChild(bootWait)
+  const backBtnBoot = ensureBackBtn()
+  backBtnBoot.onclick = () => {
+    clearJoinRetry()
+    sock.emit('room:leave')
+    tearDown()
+  }
+  setGameBackVisible(true)
 
   const mountSpectatorResult = (end: {
     winner: Side
@@ -611,6 +743,12 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
     setGameBackVisible(false)
   }
 
+  sock.on('spectator:count', (p: { count?: number }) => {
+    const n = typeof p.count === 'number' ? p.count : 0
+    if (gameRoot.style.display === 'none') return
+    updateSpectatorCountBadge(gameRoot, n)
+  })
+
   sock.on('room:countdown', (payload: { seconds: number }) => {
     if (gameRoot.style.display !== 'none') {
       showGameCountdownBanner(gameRoot, payload.seconds)
@@ -618,6 +756,7 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
   })
 
   sock.on('game:start', () => {
+    clearJoinRetry()
     gameRoot.querySelector('.spectator-wait-panel')?.remove()
     gameRoot.querySelector('.match-result-full')?.remove()
     document.getElementById('match-rematch-countdown')?.remove()
@@ -630,6 +769,8 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
       tearDown()
     }
 
+    removeRoomChat?.()
+    removeRoomChat = null
     startOnlineMatch(
       'game',
       'left',
@@ -640,24 +781,32 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
       },
       { spectator: true },
     )
+    removeRoomChat = mountSpectatorRoomChat(gameRoot, sock)
   })
 
   sock.on('spectator:joined', (p: { players: Array<{ nickname: string; side: string }>; phase: string }) => {
+    clearJoinRetry()
+    if (p.phase === 'playing') {
+      gameRoot.querySelector('.spectator-wait-panel')?.remove()
+      return
+    }
     if (p.phase === 'result') {
       gameRoot.style.display = 'block'
       gameRoot.style.position = 'relative'
       gameRoot.innerHTML = ''
       const panel = document.createElement('div')
       panel.className = 'spectator-wait-panel'
-      panel.style.cssText =
-        'min-height:200px;display:flex;align-items:center;justify-content:center;padding:24px;color:#c8c8e0;font:16px system-ui,sans-serif;text-align:center'
+      panel.style.cssText = waitPanelStyle
       panel.textContent = 'Матч завершён. Ожидание реванша или нового старта…'
       gameRoot.appendChild(panel)
+      removeRoomChat?.()
+      removeRoomChat = mountSpectatorRoomChat(gameRoot, sock)
       const backBtn = ensureBackBtn()
       backBtn.onclick = () => {
         sock.emit('room:leave')
         tearDown()
       }
+      setGameBackVisible(true)
     }
   })
 
@@ -665,7 +814,25 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
     tearDown()
   })
 
-  sock.on('error', (payload: { message?: string }) => {
+  sock.on('error', (payload: { code?: string; message?: string }) => {
+    const c = payload?.code
+    if (c === 'INVALID_PHASE') {
+      const msg = payload?.message ?? 'Матч ещё не начался. Ожидайте начала.'
+      let wp = gameRoot.querySelector('.spectator-wait-panel') as HTMLElement | null
+      if (!wp) {
+        gameRoot.innerHTML = ''
+        wp = document.createElement('div')
+        wp.className = 'spectator-wait-panel'
+        wp.style.cssText = waitPanelStyle
+        gameRoot.appendChild(wp)
+      }
+      wp.textContent = msg
+      gameRoot.style.display = 'block'
+      if (!joinRetryTimer) {
+        joinRetryTimer = setInterval(() => sock.emit('spectator:join', { code }), 4000)
+      }
+      return
+    }
     alert(payload?.message ?? 'Ошибка')
     tearDown()
   })
