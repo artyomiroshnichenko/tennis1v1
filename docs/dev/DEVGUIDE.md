@@ -276,6 +276,8 @@ VITE_FIREBASE_PROJECT_ID=...
 | Portainer | https://portainer.engbotai.ru |
 | Netdata | https://netdata.engbotai.ru |
 
+Открытые задачи по прод-доступности домена (HTTPS, редиректы, Jino): **[BACKLOG.md](./BACKLOG.md)**. До их закрытия разработку и проверку игры удобно вести локально (разделы «Локальная разработка» выше).
+
 ---
 
 ### 1. Первичная настройка сервера
