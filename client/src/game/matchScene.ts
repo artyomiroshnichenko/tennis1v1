@@ -18,10 +18,11 @@ export type MatchSceneOpts = {
   isBot?: boolean
   opponentName?: string
   onMatchEnd: (payload: {
-    winner: Side
+    winner: Side | null
     reason: string
     sets: [number, number][]
     technical?: boolean
+    doubleDefeat?: boolean
   }) => void
 }
 
@@ -191,13 +192,14 @@ export class MatchScene extends Phaser.Scene {
     this.startSidesFlipAnimation()
   }
   private readonly onOver = (p: {
-    winner: Side
+    winner: Side | null
     reason: string
     sets?: [number, number][]
     technical?: boolean
+    doubleDefeat?: boolean
   }): void => {
     this.hidePauseOverlay()
-    if (!this.opts.spectator) {
+    if (!this.opts.spectator && p.winner !== null) {
       if (p.winner === this.opts.mySide) matchAudio.matchWin()
       else matchAudio.matchLose()
     }
@@ -207,14 +209,40 @@ export class MatchScene extends Phaser.Scene {
       reason: p.reason,
       sets: p.sets ?? [],
       technical: p.technical,
+      doubleDefeat: p.doubleDefeat,
     })
   }
 
-  private readonly onGamePause = (p: { reason?: string; seconds?: number; source?: string }): void => {
-    if (p.reason === 'disconnect' && p.seconds !== undefined) {
-      const peerMsg = 'Соперник отключился. Идёт отсчёт до завершения матча.'
-      const tabMsg = 'Вкладка неактивна — вернитесь, иначе засчитается поражение.'
-      this.showPauseOverlay(p.source === 'peer' ? peerMsg : tabMsg, p.seconds)
+  private readonly onGameResync = (p: { initialState: GameStateWire }): void => {
+    this.lastState = p.initialState
+  }
+
+  private readonly onGamePause = (p: {
+    reason?: string
+    seconds?: number
+    source?: string
+    deadlineTs?: number
+  }): void => {
+    if (p.reason === 'resume_countdown' && p.deadlineTs !== undefined) {
+      this.showPauseOverlay('Скоро продолжение матча…', undefined, p.deadlineTs)
+      return
+    }
+    if (p.reason === 'disconnect') {
+      if (p.source === 'tab' && p.seconds !== undefined) {
+        this.showPauseOverlay('Вкладка неактивна — вернитесь, иначе засчитается поражение.', p.seconds)
+        return
+      }
+      if (p.source === 'peer') {
+        const msg =
+          p.seconds !== undefined && p.seconds > 90
+            ? 'Соперник отключился. Ожидание до 3 минут; можно писать в чат. Если не вернётся — техническая победа.'
+            : 'Соперник отключился. Идёт отсчёт до завершения матча.'
+        if (p.deadlineTs !== undefined) {
+          this.showPauseOverlay(msg, undefined, p.deadlineTs)
+        } else if (p.seconds !== undefined) {
+          this.showPauseOverlay(msg, p.seconds)
+        }
+      }
     }
   }
 
@@ -230,7 +258,7 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private showPauseOverlay(mainMsg: string, countdownFrom?: number): void {
+  private showPauseOverlay(mainMsg: string, countdownFrom?: number, deadlineTs?: number): void {
     const parent = this.game.canvas?.parentElement
     if (!parent) return
     this.hidePauseOverlay()
@@ -242,7 +270,18 @@ export class MatchScene extends Phaser.Scene {
     el.appendChild(t)
     parent.appendChild(el)
     this.pauseOverlayEl = el
-    if (countdownFrom !== undefined && countdownFrom > 0) {
+    if (deadlineTs !== undefined) {
+      const tick = (): void => {
+        const left = Math.max(0, Math.ceil((deadlineTs - Date.now()) / 1000))
+        t.textContent = `${mainMsg}\nОсталось: ${left} с`
+        if (left <= 0 && this.pauseCountdownTimer) {
+          clearInterval(this.pauseCountdownTimer)
+          this.pauseCountdownTimer = null
+        }
+      }
+      tick()
+      this.pauseCountdownTimer = setInterval(tick, 250)
+    } else if (countdownFrom !== undefined && countdownFrom > 0) {
       let left = countdownFrom
       const tick = (): void => {
         t.textContent = `${mainMsg}\nОсталось: ${left} с`
@@ -384,6 +423,7 @@ export class MatchScene extends Phaser.Scene {
     } else {
       sock.on('game:pause', this.onGamePause)
       sock.on('game:resume', this.onGameResume)
+      sock.on('game:resync', this.onGameResync)
       sock.on('chat:reaction', this.onChatReaction)
     }
 
@@ -714,6 +754,7 @@ export class MatchScene extends Phaser.Scene {
       sock.off('game:over', this.onOver)
       sock.off('game:pause', this.onGamePause)
       sock.off('game:resume', this.onGameResume)
+      sock.off('game:resync', this.onGameResync)
       sock.off('chat:reaction', this.onChatReaction)
       sock.off('bot:pause:state', this.onBotPauseState)
     }

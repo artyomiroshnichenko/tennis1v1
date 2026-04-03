@@ -37,7 +37,7 @@
 - `server/src/game/constants.ts`, `geometry.ts`, `scoring.ts`, `types.ts` — корт, счёт, типы wire.
 - `server/src/game/matchEngine.ts` — фазы подачи/ралли/пауза очка/смена сторон, физика мяча с высотой и сеткой, ввод индикаторов.
 - `server/src/game/MatchController.ts` — тик, эмиты `game:start`, `game:state`, `game:point` (с полем `score`), `game:event`, `game:serve:prompt`, `game:indicator:show`, `game:sides:change`, `game:over` (в т.ч. `technical`); старт после отсчёта лобби; `getWireState()` для поздних наблюдателей.
-- `server/src/rooms/RoomManager.ts` — фазы комнаты включая `result`, реванш, наблюдатели; после `finishCountdown` — `MatchController`; `handleGameInputMove` / `handleGameInputIndicator`; при `room:leave` во время матча — победа сопернику (`forfeitDisconnected`).
+- `server/src/rooms/RoomManager.ts` — фазы комнаты включая `result`, реванш, наблюдатели; после `finishCountdown` — `MatchController`; `handleGameInputMove` / `handleGameInputIndicator`; обрыв TCP vs `room:leave` — см. эпик 08 (`handleTransportDisconnect`, `leaveRoomPlayerIntentional`, `room:rejoin`).
 - `server/src/socket/lobbySocket.ts` — обработчики `game:input:*`, `room:rematch`, `spectator:join`.
 
 **Клиент:**
@@ -97,11 +97,16 @@
 - Сервер: `matchChat` в комнате (сообщения с начала матча + экран результата), `maskBannedWords`, лимит 200 символов и 3 сообщения / 5 с, реакции `chat:reaction` (1 / 5 с), `spectator:joined.matchChat`.
 - Клиент: `client/src/ui/roomChat.ts`, чат в лобби (сворачивание по умолчанию развёрнут) и на `#game`, реакции в `matchScene` (Phaser + `matchAudio`).
 
-## Следующий логичный шаг: эпик 08 и далее по PRD
+### Эпик 08 — отключение и переподключение (закрыт по чеклисту в `docs/business/epic-08-disconnect.md`)
 
-Эпики **06–07** закрыты по бизнес-чеклистам. Протокол — **`docs/dev/API.md`**.
+- Сервер: пауза **3 мин** при обрыве сокета в матче, слот игрока `socketId: null`, `room:rejoin` + `game:resync`, отсчёт **10 с** после возврата (`resume_countdown`), аннуляция фазы удара `abortStrikeIfPending`, двойное поражение `DOUBLE_DEFEAT` в Prisma; `room:leave` — немедленный форфейт.
+- Клиент: `deadlineTs` на паузе, `sessionStorage` + `reconnect` → `room:rejoin`, тексты «Техническая победа» / двойной исход.
 
-Зависимости: эпики **08–09** — по PRD; эпики **01–07** закрыты в `main`.
+## Следующий логичный шаг: эпик 09 и далее по PRD
+
+Эпики **06–08** закрыты по бизнес-чеклистам. Протокол — **`docs/dev/API.md`**.
+
+Зависимости: эпик **09** — по PRD; эпики **01–08** закрыты в `main`.
 
 ---
 
@@ -132,11 +137,11 @@ cd client && npm install && npm run dev
 ## Чеклист для нового агента в первом сообщении чата
 
 - [ ] Прочитать **`docs/dev/AGENT_HANDOFF.md`** (этот файл), раздел про сверку с бизнес-чеклистом.
-- [ ] Открыть следующий **`docs/business/epic-NN-*.md`** по PRD (например **`epic-08-disconnect.md`**) и чеклист.
+- [ ] Открыть следующий **`docs/business/epic-NN-*.md`** по PRD (например **`epic-09-admin.md`**) и чеклист.
 - [ ] Сверить **`docs/dev/API.md`** и код под выбранный эпик.
 - [ ] Просмотреть **`docs/dev/BACKLOG.md`** — не смешивать с объёмом эпика без явного запроса.
 - [ ] Не опираться на README без сверки с кодом.
 
 Краткая формулировка для старта чата:
 
-> Продолжи Tennis 1v1 со следующего эпика по PRD. Прочитай `docs/dev/AGENT_HANDOFF.md` и соответствующий `docs/business/epic-NN-*.md`. В `main` уже эпики 01–07.
+> Продолжи Tennis 1v1 со следующего эпика по PRD. Прочитай `docs/dev/AGENT_HANDOFF.md` и соответствующий `docs/business/epic-NN-*.md`. В `main` уже эпики 01–08.

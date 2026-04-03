@@ -723,16 +723,18 @@ async function runBotMatch(nickname: string, difficulty: BotDifficulty): Promise
     ensureGameBackForBot(sock)
 
     const renderEnd = (end: {
-      winner: Side
+      winner: Side | null
       reason: string
       sets: [number, number][]
       technical?: boolean
+      doubleDefeat?: boolean
     }): void => {
       if (!gameRoot) return
       gameRoot.querySelector('.match-result-full')?.remove()
       const overlay = document.createElement('div')
       overlay.className = 'match-result-full'
-      const youWin = end.winner === 'left'
+      const w = end.winner ?? 'left'
+      const youWin = w === 'left'
       const winBg = 'linear-gradient(180deg, rgba(22,48,32,0.97) 0%, rgba(14,28,20,0.98) 100%)'
       const loseBg = 'linear-gradient(180deg, rgba(48,22,26,0.97) 0%, rgba(28,14,18,0.98) 100%)'
       overlay.style.cssText = `position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:${youWin ? winBg : loseBg};color:#e8e8f0;font:18px system-ui,sans-serif;text-align:center;z-index:30;padding:20px`

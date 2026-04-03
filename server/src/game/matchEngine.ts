@@ -62,7 +62,13 @@ export type PendingEmit = {
   servePrompt?: Side
   indicator?: { phase: 'direction' | 'power' }
   sidesChange?: boolean
-  pause?: { reason: 'disconnect'; seconds: number }
+  pause?: {
+    reason: 'disconnect' | 'resume_countdown'
+    seconds: number
+    source?: 'peer' | 'tab'
+    /** Эпоха ms — для синхронизации длинной паузы на клиенте */
+    deadlineTs?: number
+  }
   over?: { winner: Side; reason: string }
 }
 
@@ -165,6 +171,18 @@ export class MatchEngine {
     if (ph.k === 'hit_dir') return { side: ph.for, phase: 'direction' }
     if (ph.k === 'hit_pwr') return { side: ph.for, phase: 'power' }
     return null
+  }
+
+  /** Аннулировать текущую фазу подачи/удара без изменения счёта (эпик 08). */
+  abortStrikeIfPending(): PendingEmit[] {
+    if (!this.getIndicatorNeed()) return []
+    const srv = currentServer(this.score)
+    this.resetBallAtServer(srv)
+    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    this.plState = 'idle'
+    this.prState = 'idle'
+    this.serveInPlay = false
+    return [{ servePrompt: srv, indicator: { phase: 'power' } }]
   }
 
   getWireState(): GameStateWire {

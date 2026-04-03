@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto'
 import type { Server } from 'socket.io'
 import { MatchController } from '../game/MatchController'
-import { persistOnlineMatch } from '../match/persistOnlineMatch'
+import type { Side } from '../game/types'
+import { persistOnlineDoubleDefeat, persistOnlineMatch } from '../match/persistOnlineMatch'
 import { maskBannedWords } from '../chat/moderate'
 import type {
   ManagedRoom,
@@ -120,9 +121,11 @@ export class RoomManager {
       this.io.to(`room:${room.id}`).emit('room:closed')
     }
     for (const p of room.players) {
-      this.socketToRoomId.delete(p.socketId)
-      const sock = this.io.sockets.sockets.get(p.socketId)
-      sock?.leave(`room:${room.id}`)
+      if (p.socketId) {
+        this.socketToRoomId.delete(p.socketId)
+        const sock = this.io.sockets.sockets.get(p.socketId)
+        sock?.leave(`room:${room.id}`)
+      }
     }
     for (const s of room.spectators) {
       this.spectatorToRoomId.delete(s.socketId)
@@ -172,6 +175,7 @@ export class RoomManager {
     const players = this.buildPlayersPayload(room)
     const lobbyChat = [...room.lobbyChat]
     for (const p of room.players) {
+      if (!p.socketId) continue
       const side: 'left' | 'right' = p.isHost ? 'left' : 'right'
       this.io.to(p.socketId).emit('room:joined', {
         side,
@@ -183,9 +187,10 @@ export class RoomManager {
 
   private emitRematchState(room: ManagedRoom): void {
     for (const p of room.players) {
+      if (!p.socketId) continue
       const youReady = room.rematchReady.has(p.socketId)
-      const peer = room.players.find((o) => o.socketId !== p.socketId)
-      const peerReady = peer ? room.rematchReady.has(peer.socketId) : false
+      const peer = room.players.find((o) => o !== p)
+      const peerReady = peer?.socketId ? room.rematchReady.has(peer.socketId) : false
       this.io.to(p.socketId).emit('room:rematch:state', { youReady, peerReady })
     }
   }
@@ -218,14 +223,28 @@ export class RoomManager {
     const guest = r.players.find((p) => !p.isHost)
     if (!host || !guest) return
     r.rematchReady.clear()
-    r.match = new MatchController(this.io, r.id, host.socketId, guest.socketId, {
+    r.match = new MatchController(this.io, r.id, host.socketId!, guest.socketId!, {
       onStopped: () => {
         r.match = undefined
       },
       onOver: (p) => {
-        void persistOnlineMatch(r, p.winner, p.sets, p.reason)
+        if (p.doubleDefeat) {
+          void persistOnlineDoubleDefeat(r, p.sets, p.reason)
+          r.phase = 'result'
+          r.rematchReady.clear()
+          this.destroyRoom(r, true)
+          return
+        }
+        if (p.winner !== null) {
+          void persistOnlineMatch(r, p.winner, p.sets, p.reason)
+        }
         r.phase = 'result'
         r.rematchReady.clear()
+        r.players = r.players.filter((pl) => pl.socketId !== null)
+        if (r.players.length === 0) {
+          this.destroyRoom(r, true)
+          return
+        }
         this.emitRematchState(r)
       },
     })
@@ -381,7 +400,7 @@ export class RoomManager {
   handleRematch(socketId: string): void {
     const room = this.getRoomBySocket(socketId)
     if (!room || room.phase !== 'result') return
-    if (!room.players.some((p) => p.socketId === socketId)) return
+    if (!room.players.some((p) => p.socketId !== null && p.socketId === socketId)) return
     room.rematchReady.add(socketId)
     this.emitRematchState(room)
     if (room.rematchReady.size >= 2 && room.players.length === 2) {
@@ -408,14 +427,63 @@ export class RoomManager {
     room.match.applyIndicator(socketId, ph, v)
   }
 
-  leaveSocket(socketId: string): void {
+  /** Явный выход (кнопка «Выйти» / room:leave). */
+  leaveRoomPlayerIntentional(socketId: string): void {
     const room = this.getRoomBySocket(socketId)
     if (!room) return
-
-    if (room.match) {
-      room.match.forfeitDisconnected(socketId)
+    if (room.phase === 'playing' && room.match) {
+      room.match.intentionalForfeit(socketId)
     }
+    this.finalizePlayerRemovedFromRoom(socketId, room)
+  }
 
+  /** Обрыв TCP: в матче — пауза и слот с null socketId; в лобби — как раньше убираем игрока. */
+  handleTransportDisconnect(socketId: string): void {
+    const room = this.getRoomBySocket(socketId)
+    if (!room) return
+    if (room.phase === 'playing' && room.match) {
+      const player = room.players.find((p) => p.socketId === socketId)
+      if (!player) return
+      room.match.onTransportDisconnect(socketId)
+      player.socketId = null
+      this.socketToRoomId.delete(socketId)
+      this.io.sockets.sockets.get(socketId)?.leave(`room:${room.id}`)
+      return
+    }
+    this.finalizePlayerRemovedFromRoom(socketId, room)
+  }
+
+  rejoinMatch(
+    socketId: string,
+    codeRaw: string,
+    nickname: string,
+    subjectId: string,
+  ): ManagedRoom | { error: string; message: string } {
+    const code = codeRaw.trim().toUpperCase()
+    const room = this.roomsByCode.get(code)
+    if (!room || room.phase !== 'playing' || !room.match) {
+      return { error: 'INVALID_PHASE', message: 'Нет активного матча для переподключения' }
+    }
+    const player = room.players.find((p) => p.subjectId === subjectId && p.socketId === null)
+    if (!player) {
+      return { error: 'NOT_IN_ROOM', message: 'Слот переподключения не найден' }
+    }
+    if (player.nickname !== nickname) {
+      return { error: 'VALIDATION_ERROR', message: 'Никнейм не совпадает с комнатой' }
+    }
+    player.socketId = socketId
+    this.socketToRoomId.set(socketId, room.id)
+    this.attachSocketToRoom(socketId, room.id)
+    const side: Side = player.isHost ? 'left' : 'right'
+    room.match.rebindSocket(socketId, side)
+    room.match.onSideReconnected(side)
+    const initialState = room.match.getWireState()
+    this.io.to(socketId).emit('room:rejoined', {})
+    this.io.to(socketId).emit('game:resync', { initialState })
+    return room
+  }
+
+  private finalizePlayerRemovedFromRoom(socketId: string, room: ManagedRoom): void {
     const player = room.players.find((p) => p.socketId === socketId)
     if (!player) return
 

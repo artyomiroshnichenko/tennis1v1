@@ -103,7 +103,7 @@ export function registerLobbySocket(io: Server): void {
         return
       }
       rooms.leaveSpectator(socket.id)
-      rooms.leaveSocket(socket.id)
+      rooms.leaveRoomPlayerIntentional(socket.id)
     })
 
     socket.on('room:rematch', () => {
@@ -190,6 +190,27 @@ export function registerLobbySocket(io: Server): void {
       }
     })
 
+    socket.on('room:rejoin', (payload: { code?: string }) => {
+      try {
+        const code = payload?.code
+        if (typeof code !== 'string' || !code.trim()) {
+          socketError(socket, 'VALIDATION_ERROR', 'Укажите код комнаты')
+          return
+        }
+        const nickname = readNickname(socket, undefined)
+        const joined = rooms.rejoinMatch(socket.id, code, nickname, auth.sub)
+        if ('error' in joined) {
+          socketError(socket, joined.error, joined.message)
+        }
+      } catch (e) {
+        if (e instanceof NicknameValidationError) {
+          socketError(socket, 'VALIDATION_ERROR', e.message)
+          return
+        }
+        socketError(socket, 'INTERNAL_ERROR', 'Не удалось переподключиться к матчу')
+      }
+    })
+
     socket.on('spectator:join', (payload: { code?: string }) => {
       try {
         const code = payload?.code
@@ -218,7 +239,7 @@ export function registerLobbySocket(io: Server): void {
         return
       }
       rooms.leaveSpectator(socket.id)
-      rooms.leaveSocket(socket.id)
+      rooms.handleTransportDisconnect(socket.id)
     })
   })
 }

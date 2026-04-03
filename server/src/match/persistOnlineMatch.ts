@@ -14,7 +14,7 @@ export async function persistOnlineMatch(
   const guest = room.players.find((p) => !p.isHost)
   if (!host || !guest) return
 
-  const technical = reason === 'Соперник вышел'
+  const technical = reason === 'Соперник вышел' || reason === 'Соперник не вернулся'
   if (host.authType !== 'user' && guest.authType !== 'user') return
 
   const winnerPlayer = winnerSide === 'left' ? host : guest
@@ -48,5 +48,47 @@ export async function persistOnlineMatch(
     })
   } catch (e) {
     console.error('persistOnlineMatch failed', e)
+  }
+}
+
+/** Оба участника не вернулись после обрыва (эпик 08). */
+export async function persistOnlineDoubleDefeat(
+  room: ManagedRoom,
+  sets: [number, number][],
+  reason: string,
+): Promise<void> {
+  const host = room.players.find((p) => p.isHost)
+  const guest = room.players.find((p) => !p.isHost)
+  if (!host || !guest) return
+  if (host.authType !== 'user' && guest.authType !== 'user') return
+
+  try {
+    await prisma.match.create({
+      data: {
+        type: 'ONLINE',
+        status: 'DOUBLE_DEFEAT',
+        winnerId: null,
+        sets: sets as unknown as Prisma.InputJsonValue,
+        finishedAt: new Date(),
+        players: {
+          create: [
+            {
+              side: 'left',
+              isWinner: false,
+              userId: host.authType === 'user' ? host.subjectId : null,
+              guestNickname: host.authType === 'guest' ? host.nickname : null,
+            },
+            {
+              side: 'right',
+              isWinner: false,
+              userId: guest.authType === 'user' ? guest.subjectId : null,
+              guestNickname: guest.authType === 'guest' ? guest.nickname : null,
+            },
+          ],
+        },
+      },
+    })
+  } catch (e) {
+    console.error('persistOnlineDoubleDefeat failed', e)
   }
 }

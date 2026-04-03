@@ -93,7 +93,8 @@ socket.emit('error', { code: string, message: string })
 | `bot:visibility` | `{ hidden: boolean }` | Бот-матч: вкладка скрыта или снова видна — при `hidden: true` сервер шлёт `game:pause` на 15 с; при `false` — `game:resume` |
 | `bot:toggle_pause` | — | Бот-матч: переключить ручную паузу (на клиенте по умолчанию клавиша P); ответ — `bot:pause:state` |
 | `room:join` | `{ code, nickname }` | Войти в комнату по коду |
-| `room:leave` | — | Покинуть комнату |
+| `room:leave` | — | Покинуть комнату (во время матча — немедленное поражение вышедшего) |
+| `room:rejoin` | `{ code }` | Переподключиться к текущему онлайн-матчу после обрыва сокета (тот же JWT и ник, слот с `socketId = null`) |
 | `room:rematch` | — | Запрос на реванш |
 | `game:input:move` | `{ dx, dy }` | Направление движения игрока |
 | `game:input:indicator` | `{ phase: 'direction' \| 'power', value: number }` | Нажатие индикатора удара — фаза и позиция (0–1) |
@@ -109,6 +110,8 @@ socket.emit('error', { code: string, message: string })
 | `bot:started` | `{ initialState, botName }` | Бот-матч начался — возвращает имя бота и начальное состояние |
 | `bot:pause:state` | `{ paused: boolean }` | Бот-матч: подтверждение ручной паузы после `bot:toggle_pause` |
 | `room:joined` | `{ side: 'left' \| 'right', players, lobbyChat? }` | Подтверждение входа; `players` — `{ nickname, side }[]`; `lobbyChat` — история чата лобби для синхронизации |
+| `room:rejoined` | `{}` | Успешное переподключение к матчу; далее — `game:resync` |
+| `game:resync` | `{ initialState }` | Полное состояние матча одному клиенту после `room:rejoin` |
 | `room:full` | — | Комната заполнена |
 | `room:countdown` | `{ seconds }` | Отсчёт перед стартом (15 сек) |
 | `room:closed` | — | Комната закрыта |
@@ -119,9 +122,9 @@ socket.emit('error', { code: string, message: string })
 | `game:indicator:show` | `{ phase: 'direction' \| 'power' }` | Показать индикатор — клиент запускает анимацию полосы |
 | `game:event` | `{ type: 'ace' \| 'net' \| 'out' \| 'let' \| 'fault' }` | Игровое событие |
 | `game:sides:change` | — | Смена сторон |
-| `game:pause` | `{ reason: 'disconnect', seconds, source?: 'peer' \| 'tab' }` | Пауза с обратным отсчётом: `peer` — отключился соперник в онлайн-матче (ожидание до завершения); `tab` — бот-матч, скрыта вкладка |
-| `game:resume` | `{}` (или пустое тело) | Матч продолжается; после паузы `peer` — перед `game:over`; в бот-матче при возврате на вкладку до истечения 15 с |
-| `game:over` | `{ winner, sets, reason, technical? }` | Матч завершён; `technical` — отключение соперника |
+| `game:pause` | `{ reason, seconds, source?, deadlineTs? }` | `reason: 'disconnect'` + `source: 'peer'` — ожидание соперника до **3 мин** (`deadlineTs` — эпоха ms для синхронизации UI); `reason: 'resume_countdown'` — после переподключения **10 с** до `game:resume`; `source: 'tab'` + `disconnect` — бот-матч, пауза 15 с |
+| `game:resume` | `{}` (или пустое тело) | Матч продолжается после `resume_countdown` или в бот-матче |
+| `game:over` | `{ winner, sets, reason, technical?, doubleDefeat? }` | Матч завершён; `winner` может быть `null` при `doubleDefeat`; техническое неявка соперника — причина «Соперник не вернулся» |
 | `room:rematch:state` | `{ youReady, peerReady }` | Согласие на реванш (только игрокам) |
 | `spectator:joined` | `{ players, phase, matchChat }` | Наблюдатель в комнате; `phase`: `playing` \| `result`; `matchChat` — сообщения с начала текущего матча (и экрана результата) |
 | `chat:message` | `{ from, text, timestamp }` | Новое сообщение в чате (текст уже с маскировкой запрещённых слов на сервере) |

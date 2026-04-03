@@ -43,6 +43,8 @@ enum MatchType {
 enum MatchStatus {
   FINISHED
   TECHNICAL_DEFEAT
+  /// Оба участника не вернулись после обрыва (эпик 08)
+  DOUBLE_DEFEAT
 }
 
 model MatchPlayer {

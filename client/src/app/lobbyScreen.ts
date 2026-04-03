@@ -87,6 +87,16 @@ function clearRoomQueryParam(): void {
   window.history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash)
 }
 
+function setMatchSessionKeys(code: string): void {
+  sessionStorage.setItem('tennis_room_code', code)
+  sessionStorage.setItem('tennis_match_active', '1')
+}
+
+function clearMatchSessionKeys(): void {
+  sessionStorage.removeItem('tennis_room_code')
+  sessionStorage.removeItem('tennis_match_active')
+}
+
 function setRoomQueryParam(code: string): void {
   const u = new URL(window.location.href)
   u.searchParams.set('room', code)
@@ -311,6 +321,7 @@ function wireLobbySocket(
   let removeGameChat: (() => void) | null = null
 
   const goToMenuFromGame = (gameEl: HTMLElement): void => {
+    clearMatchSessionKeys()
     removeGameChat?.()
     removeGameChat = null
     removeSpectatorCountBadge(gameEl)
@@ -343,6 +354,13 @@ function wireLobbySocket(
     ui.setErr('Не удалось подключиться к серверу')
   })
 
+  const tryRejoinMatch = (): void => {
+    if (sessionStorage.getItem('tennis_match_active') !== '1') return
+    const code = sessionStorage.getItem('tennis_room_code')
+    if (code && sock.connected) sock.emit('room:rejoin', { code })
+  }
+  sock.io.on('reconnect', tryRejoinMatch)
+
   sock.on('spectator:count', (p: { count?: number }) => {
     const n = typeof p.count === 'number' ? p.count : 0
     const gameEl = document.getElementById(gameRootId)
@@ -352,6 +370,7 @@ function wireLobbySocket(
 
   sock.on('room:created', (payload: { code: string }) => {
     ui.setCode(payload.code)
+    setMatchSessionKeys(payload.code)
   })
 
   sock.on(
@@ -369,6 +388,8 @@ function wireLobbySocket(
         chatLines = [...payload.lobbyChat]
         ui.setMsgs(chatLines)
       }
+      const rc = new URL(window.location.href).searchParams.get('room')
+      if (rc) setMatchSessionKeys(rc)
     },
   )
 
@@ -408,6 +429,8 @@ function wireLobbySocket(
 
   sock.on('game:start', () => {
     clearWaitTimer()
+    const urlRoom = new URL(window.location.href).searchParams.get('room')
+    if (urlRoom) setMatchSessionKeys(urlRoom)
     removeGameChat?.()
     removeGameChat = null
     lobbyRoot.style.display = 'none'
@@ -420,12 +443,15 @@ function wireLobbySocket(
       document.getElementById('match-rematch-countdown')?.remove()
       setGameBackVisible(true)
 
-      startOnlineMatch(gameRootId, mySide, sock, nickname, ({ winner, reason, sets, technical }) => {
-        const youWin = winner === mySide
+      startOnlineMatch(gameRootId, mySide, sock, nickname, ({ winner, reason, sets, technical, doubleDefeat }) => {
+        clearMatchSessionKeys()
+        const youWin = winner !== null && winner === mySide
+        const neutral = winner === null || doubleDefeat
         const overlay = document.createElement('div')
         overlay.className = 'match-result-full'
         const winBg = 'linear-gradient(180deg, rgba(22,48,32,0.97) 0%, rgba(14,28,20,0.98) 100%)'
         const loseBg = 'linear-gradient(180deg, rgba(48,22,26,0.97) 0%, rgba(28,14,18,0.98) 100%)'
+        const drawBg = 'linear-gradient(180deg, rgba(36,36,52,0.97) 0%, rgba(22,22,36,0.98) 100%)'
         overlay.style.cssText = [
           'position:absolute',
           'inset:0',
@@ -434,7 +460,7 @@ function wireLobbySocket(
           'align-items:center',
           'justify-content:center',
           'gap:14px',
-          youWin ? `background:${winBg}` : `background:${loseBg}`,
+          neutral ? `background:${drawBg}` : youWin ? `background:${winBg}` : `background:${loseBg}`,
           'color:#e8e8f0',
           'font:18px system-ui,sans-serif',
           'text-align:center',
@@ -444,8 +470,8 @@ function wireLobbySocket(
         const title = document.createElement('div')
         title.style.fontSize = '28px'
         title.style.fontWeight = '600'
-        title.style.color = youWin ? '#7dffb3' : '#ff8a8a'
-        title.textContent = youWin ? 'Победа' : 'Поражение'
+        title.style.color = neutral ? '#c8c8e0' : youWin ? '#7dffb3' : '#ff8a8a'
+        title.textContent = neutral ? 'Матч не состоялся' : youWin ? 'Победа' : 'Поражение'
         const setsLine = document.createElement('div')
         setsLine.style.fontSize = '17px'
         setsLine.style.color = '#d0d0e0'
@@ -454,12 +480,18 @@ function wireLobbySocket(
         sub.style.color = '#a8a8b8'
         sub.style.fontSize = '15px'
         sub.style.maxWidth = '22rem'
-        const reasonText =
-          technical && !youWin
-            ? 'Техническое поражение: соперник отключился'
-            : technical && youWin
-              ? 'Победа по отказу соперника'
-              : reason
+        let reasonText = reason
+        if (doubleDefeat) {
+          reasonText = 'Оба игрока не вернулись после обрыва связи'
+        } else if (technical && !youWin) {
+          reasonText = reason.includes('не вернулся')
+            ? 'Техническое поражение: вы не вернулись вовремя'
+            : 'Техническое поражение: соперник отключился'
+        } else if (technical && youWin) {
+          reasonText = reason.includes('не вернулся')
+            ? 'Техническая победа: соперник не вернулся'
+            : 'Победа по отказу соперника'
+        }
         sub.textContent = reasonText
 
         rematchHintEl = document.createElement('p')
@@ -705,10 +737,11 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
   setGameBackVisible(true)
 
   const mountSpectatorResult = (end: {
-    winner: Side
+    winner: Side | null
     reason: string
     sets: [number, number][]
     technical?: boolean
+    doubleDefeat?: boolean
   }): void => {
     gameRoot.querySelector('.match-result-full')?.remove()
     const overlay = document.createElement('div')
@@ -736,7 +769,11 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
     setsLine.textContent = formatSetsDisplay(end.sets)
     const sub = document.createElement('div')
     sub.style.cssText = 'color:#a8a8b8;font-size:15px;max-width:22rem'
-    sub.textContent = end.technical ? 'Итог с учётом отключения игрока' : end.reason
+    sub.textContent = end.doubleDefeat
+      ? 'Оба игрока не вернулись после обрыва'
+      : end.technical
+        ? 'Итог с учётом отключения игрока'
+        : end.reason
     const menuBtn = document.createElement('button')
     menuBtn.type = 'button'
     menuBtn.className = 'btn-secondary'

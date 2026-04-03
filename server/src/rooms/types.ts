@@ -11,7 +11,8 @@ export type LobbyChatMessage = {
 }
 
 export type LobbyPlayer = {
-  socketId: string
+  /** null — игрок в матче временно без сокета (обрыв), слот ждёт room:rejoin */
+  socketId: string | null
   nickname: string
   subjectId: string
   authType: AuthKind
