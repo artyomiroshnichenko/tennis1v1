@@ -3,6 +3,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 import { apiV1Router } from './api/v1'
+import { registerLobbySocket } from './socket/lobbySocket'
 
 const app = express()
 const httpServer = createServer(app)
@@ -25,12 +26,7 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' })
 })
 
-io.on('connection', (socket) => {
-  console.log('client connected:', socket.id)
-  socket.on('disconnect', () => {
-    console.log('client disconnected:', socket.id)
-  })
-})
+registerLobbySocket(io)
 
 httpServer.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
