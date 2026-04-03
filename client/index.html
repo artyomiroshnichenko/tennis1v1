@@ -6,11 +6,13 @@
     <title>Tennis 1v1</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { background: #1a1a2e; overflow: hidden; }
+      body { background: #1a1a2e; min-height: 100vh; }
     </style>
   </head>
   <body>
-    <div id="game"></div>
+    <div id="app"></div>
+    <div id="recaptcha-container"></div>
+    <div id="game" style="display: none"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

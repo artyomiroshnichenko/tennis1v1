@@ -55,3 +55,21 @@ model MatchPlayer {
   match Match @relation(fields: [matchId], references: [id])
   user  User  @relation(fields: [userId], references: [id])
 }
+
+enum AuthSubjectType {
+  GUEST
+  USER
+}
+
+model RefreshToken {
+  id        String          @id @default(uuid())
+  tokenHash String          @unique
+  subjectId String
+  type      AuthSubjectType
+  expiresAt DateTime
+  createdAt DateTime        @default(now())
+  /// Для GUEST: { "nickname": string }; для USER — null
+  payload   Json?
+
+  @@index([subjectId, type])
+}

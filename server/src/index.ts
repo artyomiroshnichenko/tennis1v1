@@ -1,6 +1,8 @@
+import cors from 'cors'
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
+import { apiV1Router } from './api/v1'
 
 const app = express()
 const httpServer = createServer(app)
@@ -9,6 +11,15 @@ const io = new Server(httpServer, {
 })
 
 const PORT = process.env.PORT ?? 3000
+
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL ?? true,
+    credentials: true,
+  }),
+)
+app.use(express.json())
+app.use('/api/v1', apiV1Router)
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' })
