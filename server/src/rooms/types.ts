@@ -1,3 +1,5 @@
+import type { MatchController } from '../game/MatchController'
+
 export type RoomPhase = 'waiting' | 'countdown' | 'playing'
 
 export type LobbyChatMessage = {
@@ -26,6 +28,7 @@ export type ManagedRoom = {
   createdAt: number
   countdownTimer?: ReturnType<typeof setInterval>
   idleTimer?: ReturnType<typeof setTimeout>
+  match?: MatchController
 }
 
 export type RoomJoinedPlayer = { nickname: string; side: 'left' | 'right' }

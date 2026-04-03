@@ -94,6 +94,14 @@ export function registerLobbySocket(io: Server): void {
       rooms.leaveSocket(socket.id)
     })
 
+    socket.on('game:input:move', (payload: { dx?: number; dy?: number } | undefined) => {
+      rooms.handleGameInputMove(socket.id, payload ?? {})
+    })
+
+    socket.on('game:input:indicator', (payload: { phase?: string; value?: number } | undefined) => {
+      rooms.handleGameInputIndicator(socket.id, payload ?? {})
+    })
+
     socket.on('chat:message', (payload: { text?: string }) => {
       const text = payload?.text
       if (typeof text !== 'string') {

@@ -1,0 +1,567 @@
+import {
+  BALL_REST_Z,
+  BALL_SPEED_MAX,
+  BALL_SPEED_MIN,
+  COURT_L,
+  COURT_W,
+  GRAVITY,
+  HIT_INDICATOR_TIMEOUT_MS,
+  HIT_REACH,
+  NET_CLEAR_Z,
+  NET_Y,
+  PLAYER_SPEED,
+  POINT_PAUSE_MS,
+  SERVE_AIM_TIMEOUT_MS,
+  SERVE_POWER_TIMEOUT_MS,
+  SIDES_CHANGE_MS,
+  TICK_DT,
+} from './constants'
+import {
+  baselinePosition,
+  clampPlayerToHalf,
+  halfForY,
+  inDiagonalServiceTarget,
+  inSinglesCourt,
+} from './geometry'
+import {
+  addPoint,
+  createInitialScore,
+  currentServer,
+  type ScoreInternal,
+  toWireScore,
+} from './scoring'
+import type { GameEventType, GamePhase, GameStateWire, PlayerState, Side } from './types'
+
+function other(s: Side): Side {
+  return s === 'left' ? 'right' : 'left'
+}
+
+function len(x: number, y: number): number {
+  return Math.hypot(x, y)
+}
+
+function norm(x: number, y: number): { x: number; y: number } {
+  const l = len(x, y)
+  if (l < 1e-6) return { x: 0, y: 1 }
+  return { x: x / l, y: y / l }
+}
+
+type Phase =
+  | { k: 'point_pause'; until: number }
+  | { k: 'sides_change'; until: number }
+  | { k: 'serve_power'; server: Side; until: number }
+  | { k: 'serve_aim'; server: Side; power: number; until: number }
+  | { k: 'rally' }
+  | { k: 'hit_dir'; for: Side; until: number }
+  | { k: 'hit_pwr'; for: Side; dir: number; until: number }
+  | { k: 'done'; winner: Side }
+
+export type PendingEmit = {
+  point?: { scorer: Side; reason: string }
+  event?: GameEventType
+  servePrompt?: Side
+  indicator?: { phase: 'direction' | 'power' }
+  sidesChange?: boolean
+  pause?: { reason: 'disconnect'; seconds: number }
+  over?: { winner: Side; reason: string }
+}
+
+export class MatchEngine {
+  readonly score: ScoreInternal
+  phase: Phase = { k: 'serve_power', server: 'left', until: 0 }
+  ball = { x: COURT_W / 2, y: NET_Y, z: 1.2, vx: 0, vy: 0, vz: 0 }
+  pl = { x: COURT_W / 2, y: COURT_L - 1.1, dx: 0, dy: 0 }
+  pr = { x: COURT_W / 2, y: 1.1, dx: 0, dy: 0 }
+  plState: PlayerState = 'idle'
+  prState: PlayerState = 'idle'
+  lastHit: Side | null = null
+  bouncesL = 0
+  bouncesR = 0
+  serveFaults = 0
+  consecutiveServeTimeouts = 0
+  rallySpeedCap = BALL_SPEED_MAX
+  lastStrongHitBy: Side | null = null
+  timeMs = 0
+  private serveInPlay = false
+  private aimSpread = 0
+  private pendingSidesChange = false
+
+  constructor(firstServer: Side) {
+    this.score = createInitialScore(firstServer)
+    const bp = baselinePosition(firstServer)
+    if (firstServer === 'left') {
+      this.pl.x = bp.x
+      this.pl.y = bp.y
+    } else {
+      this.pr.x = bp.x
+      this.pr.y = bp.y
+    }
+    this.ball.x = bp.x
+    this.ball.y = firstServer === 'left' ? bp.y - 0.4 : bp.y + 0.4
+    this.ball.z = 1.1
+    this.phase = {
+      k: 'serve_power',
+      server: firstServer,
+      until: this.timeMs + SERVE_POWER_TIMEOUT_MS,
+    }
+  }
+
+  private playerBody(side: Side): { x: number; y: number; dx: number; dy: number } {
+    return side === 'left' ? this.pl : this.pr
+  }
+
+  private setPlayerState(side: Side, st: PlayerState): void {
+    if (side === 'left') this.plState = st
+    else this.prState = st
+  }
+
+  private resetBallAtServer(server: Side): void {
+    const b = baselinePosition(server)
+    this.ball.x = b.x
+    this.ball.y = server === 'left' ? b.y - 0.35 : b.y + 0.35
+    this.ball.z = 1.05
+    this.ball.vx = 0
+    this.ball.vy = 0
+    this.ball.vz = 0
+    this.lastHit = null
+    this.bouncesL = 0
+    this.bouncesR = 0
+    this.serveInPlay = false
+  }
+
+  beginAfterPause(): PendingEmit {
+    const srv = currentServer(this.score)
+    this.resetBallAtServer(srv)
+    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    this.plState = 'idle'
+    this.prState = 'idle'
+    return {
+      servePrompt: srv,
+      indicator: { phase: 'power' },
+    }
+  }
+
+  private toWireBall(): { x: number; y: number; vx: number; vy: number } {
+    return {
+      x: this.ball.x / COURT_W,
+      y: this.ball.y / COURT_L,
+      vx: this.ball.vx / COURT_W,
+      vy: this.ball.vy / COURT_L,
+    }
+  }
+
+  getWirePhase(): GamePhase {
+    if (this.phase.k === 'done') return 'over'
+    if (this.phase.k === 'point_pause' || this.phase.k === 'sides_change') return 'pause'
+    if (this.phase.k === 'serve_power' || this.phase.k === 'serve_aim') return 'serving'
+    return 'playing'
+  }
+
+  getWireState(): GameStateWire {
+    return {
+      ball: this.toWireBall(),
+      players: {
+        left: {
+          x: this.pl.x / COURT_W,
+          y: this.pl.y / COURT_L,
+          state: this.plState,
+        },
+        right: {
+          x: this.pr.x / COURT_W,
+          y: this.pr.y / COURT_L,
+          state: this.prState,
+        },
+      },
+      score: toWireScore(this.score),
+      serving: currentServer(this.score),
+      phase: this.getWirePhase(),
+    }
+  }
+
+  setMove(side: Side, dx: number, dy: number): void {
+    const servePhase = this.phase.k === 'serve_power' || this.phase.k === 'serve_aim'
+    if (this.phase.k !== 'rally' && !servePhase) {
+      if (this.phase.k === 'hit_dir' || this.phase.k === 'hit_pwr') return
+    }
+    if (this.phase.k === 'serve_power' || this.phase.k === 'serve_aim') {
+      if (side !== this.phase.server) return
+      const p = this.playerBody(side)
+      p.dx = dx
+      p.dy = dy
+      if (Math.abs(dx) + Math.abs(dy) > 0.01) this.setPlayerState(side, 'running')
+      else this.setPlayerState(side, 'idle')
+      return
+    }
+    if (this.phase.k === 'rally') {
+      const p = this.playerBody(side)
+      p.dx = dx
+      p.dy = dy
+      if (Math.abs(dx) + Math.abs(dy) > 0.01) this.setPlayerState(side, 'running')
+      else this.setPlayerState(side, 'idle')
+    }
+  }
+
+  private startHitSequence(forSide: Side): PendingEmit {
+    this.setPlayerState(forSide, 'hitting')
+    const p = this.playerBody(forSide)
+    p.dx = 0
+    p.dy = 0
+    this.phase = { k: 'hit_dir', for: forSide, until: this.timeMs + HIT_INDICATOR_TIMEOUT_MS }
+    return { indicator: { phase: 'direction' } }
+  }
+
+  private canReachBall(side: Side): boolean {
+    const p = this.playerBody(side)
+    const d = len(this.ball.x - p.x, this.ball.y - p.y)
+    return d <= HIT_REACH && this.ball.z < 2.4
+  }
+
+  applyIndicator(side: Side, phase: 'direction' | 'power', value: number): PendingEmit | null {
+    const v = clamp01(value)
+    if (this.phase.k === 'serve_power' && phase === 'power' && side === this.phase.server) {
+      this.phase = {
+        k: 'serve_aim',
+        server: side,
+        power: v,
+        until: this.timeMs + SERVE_AIM_TIMEOUT_MS,
+      }
+      this.setPlayerState(side, 'serving')
+      return { indicator: { phase: 'direction' } }
+    }
+    if (this.phase.k === 'serve_aim' && phase === 'direction' && side === this.phase.server) {
+      this.aimSpread = 1 - v
+      this.fireServe(this.phase.server, this.phase.power, v)
+      return null
+    }
+    if (this.phase.k === 'hit_dir' && phase === 'direction' && side === this.phase.for) {
+      this.phase = { k: 'hit_pwr', for: side, dir: v, until: this.timeMs + HIT_INDICATOR_TIMEOUT_MS }
+      return { indicator: { phase: 'power' } }
+    }
+    if (this.phase.k === 'hit_pwr' && phase === 'power' && side === this.phase.for) {
+      this.fireGroundstroke(side, this.phase.dir, v)
+      return null
+    }
+    return null
+  }
+
+  private fireServe(server: Side, power: number, accuracyRaw: number): void {
+    const speed =
+      BALL_SPEED_MIN + (BALL_SPEED_MAX - BALL_SPEED_MIN) * (0.35 + 0.65 * clamp01(power))
+    const p = this.playerBody(server)
+    const targetX = COURT_W / 2 + (accuracyRaw - 0.5) * 2.2 * this.aimSpread
+    const targetY = server === 'left' ? NET_Y - 1.4 : NET_Y + 1.4
+    let dir = norm(targetX - this.ball.x, targetY - this.ball.y)
+    this.ball.vx = dir.x * speed
+    this.ball.vy = dir.y * speed
+    this.ball.vz = 4.2 + 3.5 * clamp01(power)
+    this.lastHit = server
+    this.serveInPlay = true
+    this.setPlayerState(server, 'idle')
+    this.phase = { k: 'rally' }
+    this.consecutiveServeTimeouts = 0
+  }
+
+  private fireGroundstroke(side: Side, dirT: number, power: number): void {
+    const speedBase =
+      BALL_SPEED_MIN + (BALL_SPEED_MAX - BALL_SPEED_MIN) * (0.25 + 0.75 * clamp01(power))
+    let cap = this.rallySpeedCap
+    if (this.lastStrongHitBy && this.lastStrongHitBy !== side) {
+      const prevStrong = this.lastStrongHitBy === 'left' ? this.pl : this.pr
+      void prevStrong
+    }
+    const ang = (dirT - 0.5) * Math.PI * 0.62
+    const toward = side === 'left' ? -1 : 1
+    const dx = Math.sin(ang)
+    const dy = Math.cos(ang) * toward
+    const d = norm(dx, dy)
+    let speed = speedBase
+    if (this.lastStrongHitBy === other(side) && power > 0.82) {
+      speed = Math.min(cap + 2.5, speed + 4)
+      this.rallySpeedCap = Math.min(BALL_SPEED_MAX, this.rallySpeedCap + 0.8)
+    } else {
+      this.rallySpeedCap = BALL_SPEED_MAX
+    }
+    if (power > 0.88) this.lastStrongHitBy = side
+    else this.lastStrongHitBy = null
+    this.ball.vx = d.x * speed
+    this.ball.vy = d.y * speed
+    this.ball.vz = 3.2 + 5.5 * clamp01(power)
+    this.lastHit = side
+    this.bouncesL = 0
+    this.bouncesR = 0
+    this.setPlayerState(side, 'idle')
+    this.phase = { k: 'rally' }
+  }
+
+  step(dt: number): PendingEmit[] {
+    const out: PendingEmit[] = []
+    this.timeMs += dt * 1000
+
+    if (this.phase.k === 'point_pause') {
+      if (this.timeMs >= this.phase.until) {
+        if (this.pendingSidesChange) {
+          this.pendingSidesChange = false
+          this.phase = { k: 'sides_change', until: this.timeMs + SIDES_CHANGE_MS }
+          out.push({ sidesChange: true })
+        } else {
+          const next = this.beginAfterPause()
+          out.push(next)
+        }
+      }
+      this.integratePlayers(dt)
+      return out
+    }
+    if (this.phase.k === 'sides_change') {
+      if (this.timeMs >= this.phase.until) {
+        const n = this.beginAfterPause()
+        out.push(n)
+      }
+      this.integratePlayers(dt)
+      return out
+    }
+    if (this.phase.k === 'done') {
+      this.integratePlayers(dt)
+      return out
+    }
+
+    if (this.phase.k === 'serve_power' && this.timeMs >= this.phase.until) {
+      out.push(...this.handleServeTimeout(this.phase.server))
+      return out
+    }
+    if (this.phase.k === 'serve_aim' && this.timeMs >= this.phase.until) {
+      out.push(...this.handleServeTimeout(this.phase.server))
+      return out
+    }
+    if (this.phase.k === 'hit_dir' && this.timeMs >= this.phase.until) {
+      out.push(...this.awardPoint(other(this.phase.for), 'Индикатор удара'))
+      return out
+    }
+    if (this.phase.k === 'hit_pwr' && this.timeMs >= this.phase.until) {
+      out.push(...this.awardPoint(other(this.phase.for), 'Индикатор удара'))
+      return out
+    }
+
+    this.integratePlayers(dt)
+    if (this.phase.k === 'rally') {
+      const ev = this.integrateBall(dt)
+      if (ev) out.push(ev)
+      const hitCheck = this.tryAutoHitWindow()
+      if (hitCheck) out.push(hitCheck)
+    } else if (this.phase.k === 'serve_power' || this.phase.k === 'serve_aim') {
+      const srv = this.phase.server
+      if (this.canReachBall(srv) && this.phase.k === 'serve_aim') {
+        /* ждём ввод */
+      }
+      if (this.canReachBall(srv) && this.phase.k === 'serve_power') {
+        /* мяч у сервера — только индикаторы */
+      }
+    }
+
+    return out
+  }
+
+  private tryAutoHitWindow(): PendingEmit | null {
+    if (this.phase.k !== 'rally') return null
+    for (const side of ['left', 'right'] as const) {
+      if (this.lastHit === side) continue
+      if (!this.canReachBall(side)) continue
+      const p = this.playerBody(side)
+      const toward =
+        side === 'left'
+          ? this.ball.y <= p.y + 0.2 && this.ball.vy >= -1.5
+          : this.ball.y >= p.y - 0.2 && this.ball.vy <= 1.5
+      if (!toward && len(this.ball.vx, this.ball.vy) > 3) continue
+      if (len(p.dx, p.dy) > 0.05) continue
+      p.dx = 0
+      p.dy = 0
+      return this.startHitSequence(side)
+    }
+    return null
+  }
+
+  private integratePlayers(dt: number): void {
+    for (const s of ['left', 'right'] as const) {
+      const st = s === 'left' ? this.plState : this.prState
+      if (st === 'hitting' || st === 'serving') continue
+      const p = this.playerBody(s)
+      const n = norm(p.dx, p.dy)
+      const sp = PLAYER_SPEED * dt
+      let nx = p.x + n.x * sp
+      let ny = p.y + n.y * sp
+      const c = clampPlayerToHalf(nx, ny, s)
+      p.x = c.x
+      p.y = c.y
+    }
+  }
+
+  private crossedNet(prevY: number, y: number): boolean {
+    return (prevY < NET_Y && y >= NET_Y) || (prevY > NET_Y && y <= NET_Y)
+  }
+
+  private integrateBall(dt: number): PendingEmit | null {
+    const py = this.ball.y
+    const pz = this.ball.z
+    const pvy = this.ball.vy
+    const pvz = this.ball.vz
+
+    this.ball.vz -= GRAVITY * dt
+    this.ball.x += this.ball.vx * dt
+    this.ball.y += this.ball.vy * dt
+    this.ball.z += this.ball.vz * dt
+
+    if (this.crossedNet(py, this.ball.y)) {
+      const dy = this.ball.y - py
+      let zCross = pz
+      if (Math.abs(dy) > 1e-8 && Math.abs(pvy) > 1e-8) {
+        const t0 = (NET_Y - py) / pvy
+        if (t0 > 0 && t0 <= dt) {
+          zCross = pz + pvz * t0
+        }
+      }
+      if (zCross < NET_CLEAR_Z) {
+        if (this.serveInPlay) {
+          this.emitLetReset()
+          return { event: 'let' }
+        }
+        return this.awardPointFromNetOrOut('net')
+      }
+    }
+
+    if (this.ball.z <= BALL_REST_Z) {
+      this.ball.z = BALL_REST_Z
+      if (Math.abs(this.ball.vz) > 0.35) this.ball.vz = -this.ball.vz * 0.58
+      else this.ball.vz = 0
+      return this.onGroundContact()
+    }
+
+    if (!inSinglesCourt(this.ball.x, this.ball.y)) {
+      if (this.ball.z > 0.12) return null
+      return this.onOut()
+    }
+
+    return null
+  }
+
+  private emitLetReset(): void {
+    const srv = currentServer(this.score)
+    this.resetBallAtServer(srv)
+    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+  }
+
+  private onGroundContact(): PendingEmit | null {
+    const h = halfForY(this.ball.y)
+    if (h === 'left') {
+      this.bouncesL++
+      if (this.bouncesL >= 2) return this.awardPoint('right', 'Два отскока')[0]!
+    } else {
+      this.bouncesR++
+      if (this.bouncesR >= 2) return this.awardPoint('left', 'Два отскока')[0]!
+    }
+
+    if (this.serveInPlay) {
+      const srv = currentServer(this.score)
+      const ok = inDiagonalServiceTarget(srv, srv === 'left' ? this.pl.x : this.pr.x, this.ball.x, this.ball.y)
+      if (!ok) return this.handleServeFault('out')
+      this.serveInPlay = false
+      const ret = other(srv)
+      if (this.bouncesR + this.bouncesL === 1 && h === other(srv)) {
+        /* приём */
+      }
+    }
+
+    if (!inSinglesCourt(this.ball.x, this.ball.y)) return this.onOut()
+    return null
+  }
+
+  private onOut(): PendingEmit {
+    if (this.serveInPlay) return this.handleServeFault('out')
+    return this.awardPoint(other(this.lastHit ?? 'left'), 'Аут')[0]!
+  }
+
+  private awardPointFromNetOrOut(kind: 'net'): PendingEmit {
+    if (this.serveInPlay) return this.handleServeFault(kind)
+    const winner = other(this.lastHit ?? 'left')
+    const em = this.awardPoint(winner, kind === 'net' ? 'Сетка' : 'Аут')
+    return em[0]!
+  }
+
+  private handleServeFault(reason: 'out' | 'net'): PendingEmit {
+    this.serveFaults++
+    if (this.serveFaults >= 2) {
+      const ret = other(currentServer(this.score))
+      return this.awardPoint(ret, 'Двойная ошибка')[0]!
+    }
+    const srv = currentServer(this.score)
+    this.resetBallAtServer(srv)
+    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    return { event: reason === 'net' ? 'net' : 'fault', servePrompt: srv, indicator: { phase: 'power' } }
+  }
+
+  private handleServeTimeout(server: Side): PendingEmit[] {
+    this.consecutiveServeTimeouts++
+    if (this.consecutiveServeTimeouts >= 2) {
+      return this.awardMatchLoss(server, 'Два подброса без удара')
+    }
+    this.serveFaults++
+    if (this.serveFaults >= 2) {
+      return this.awardPoint(other(server), 'Таймаут подачи')
+    }
+    this.resetBallAtServer(server)
+    this.phase = { k: 'serve_power', server, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    return [{ event: 'fault', servePrompt: server, indicator: { phase: 'power' } }]
+  }
+
+  private awardMatchLoss(loser: Side, reason: string): PendingEmit[] {
+    const w = other(loser)
+    this.phase = { k: 'done', winner: w }
+    return [{ over: { winner: w, reason } }]
+  }
+
+  awardPoint(winner: Side, reason: string): PendingEmit[] {
+    const res = addPoint(this.score, winner)
+    const out: PendingEmit[] = [{ point: { scorer: winner, reason }, event: mapReasonToEvent(reason) }]
+    this.serveFaults = 0
+    this.serveInPlay = false
+    this.lastStrongHitBy = null
+    this.rallySpeedCap = BALL_SPEED_MAX
+    if (res.matchOver) {
+      this.phase = { k: 'done', winner: winner }
+      out.push({ over: { winner, reason: 'Матч' } })
+      return out
+    }
+    this.phase = { k: 'point_pause', until: this.timeMs + POINT_PAUSE_MS }
+    if (res.sidesChangeAfter) {
+      this.pendingSidesChange = true
+    }
+    return out
+  }
+
+  forfeitWinner(winner: Side): PendingEmit[] {
+    this.phase = { k: 'done', winner }
+    return [{ over: { winner, reason: 'Соперник вышел' } }]
+  }
+}
+
+function clamp01(t: number): number {
+  if (Number.isNaN(t)) return 0
+  return Math.max(0, Math.min(1, t))
+}
+
+function mapReasonToEvent(reason: string): GameEventType | undefined {
+  if (reason.includes('Аут')) return 'out'
+  if (reason.includes('Сетка') || reason.includes('сетк')) return 'net'
+  if (reason.includes('Эйс')) return 'ace'
+  if (reason.includes('лет')) return 'let'
+  if (reason.includes('ошибк')) return 'fault'
+  return undefined
+}
+
+export function fixedTickSteps(accum: number, dt = TICK_DT): { steps: number; rem: number } {
+  accum += dt
+  let steps = 0
+  while (accum >= TICK_DT && steps < 5) {
+    accum -= TICK_DT
+    steps++
+  }
+  return { steps, rem: accum }
+}

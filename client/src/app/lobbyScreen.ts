@@ -1,6 +1,7 @@
 import { getGameSocket, disconnectGameSocket } from '../net/gameSocket'
 import { LS_ACCESS } from '../sessionKeys'
-import { startPhaserPlaceholder } from '../game/startPhaser'
+import { startOnlineMatch } from '../game/startPhaser'
+import type { Side } from '../game/gameTypes'
 import type { Socket } from 'socket.io-client'
 import '../ui/lobby.css'
 
@@ -204,6 +205,7 @@ function wireLobbySocket(
   onGameEndNav: () => void,
 ): void {
   let chatLines: ChatLine[] = []
+  let mySide: Side = 'left'
 
   sock.on('error', (payload: { code?: string; message?: string }) => {
     const msg = payload?.message ?? 'Ошибка'
@@ -224,9 +226,13 @@ function wireLobbySocket(
   sock.on(
     'room:joined',
     (payload: {
+      side?: string
       players: Array<{ nickname: string; side: string }>
       lobbyChat?: ChatLine[]
     }) => {
+      if (payload.side === 'left' || payload.side === 'right') {
+        mySide = payload.side
+      }
       ui.setPlayers(payload.players)
       if (payload.lobbyChat?.length) {
         chatLines = [...payload.lobbyChat]
@@ -255,7 +261,25 @@ function wireLobbySocket(
     const gameEl = document.getElementById(gameRootId)
     if (gameEl) {
       gameEl.style.display = 'block'
-      startPhaserPlaceholder(gameRootId, nickname, 'online')
+      gameEl.style.position = 'relative'
+      gameEl.querySelector('.match-result-overlay')?.remove()
+      startOnlineMatch(gameRootId, mySide, sock, nickname, ({ winner, reason }) => {
+        const youWin = winner === mySide
+        const overlay = document.createElement('div')
+        overlay.className = 'match-result-overlay'
+        overlay.style.cssText =
+          'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(26,26,46,0.92);color:#e8e8f0;font:20px system-ui,sans-serif;text-align:center;z-index:30;padding:16px;'
+        const title = document.createElement('div')
+        title.style.fontSize = '26px'
+        title.style.fontWeight = '600'
+        title.textContent = youWin ? 'Победа' : 'Поражение'
+        const sub = document.createElement('div')
+        sub.style.color = '#a8a8b8'
+        sub.style.fontSize = '15px'
+        sub.textContent = reason
+        overlay.append(title, sub)
+        gameEl.appendChild(overlay)
+      })
     }
     let backBtn = document.getElementById('game-back') as HTMLButtonElement | null
     if (!backBtn) {

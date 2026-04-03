@@ -1,0 +1,33 @@
+/** Размеры корта и тюнинг физики (метры, вид сверху). Одиночный корт 23.77 × 8.23 м. */
+
+export const COURT_W = 8.23
+export const COURT_L = 23.77
+export const NET_Y = COURT_L / 2
+export const SERVICE_DEPTH = 6.4
+/** Линия подачи от сетки к базовой линии на половине */
+export const SERVICE_LINE_OFFSET = SERVICE_DEPTH
+
+/** Игрок left — южная базовая линия (y = COURT_L), right — северная (y = 0). */
+export const LEFT_BASELINE_Y = COURT_L
+export const RIGHT_BASELINE_Y = 0
+
+export const PLAYER_SPEED = 5.2
+export const PLAYER_RADIUS = 0.35
+export const BALL_RADIUS = 0.065
+export const HIT_REACH = 0.95
+export const GRAVITY = 12
+export const NET_CLEAR_Z = 0.42
+export const BALL_REST_Z = 0.01
+
+export const SERVE_POWER_TIMEOUT_MS = 7000
+export const SERVE_AIM_TIMEOUT_MS = 7000
+export const HIT_INDICATOR_TIMEOUT_MS = 3000
+
+export const POINT_PAUSE_MS = 2200
+export const SIDES_CHANGE_MS = 2600
+
+export const TICK_DT = 1 / 60
+
+/** Минимальная скорость мяча после удара (м/с горизонтальная норма). */
+export const BALL_SPEED_MIN = 8
+export const BALL_SPEED_MAX = 38

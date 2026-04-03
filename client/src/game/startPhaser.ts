@@ -1,8 +1,13 @@
 import Phaser from 'phaser'
+import type { Socket } from 'socket.io-client'
+import { createMatchGame, type MatchSceneOpts } from './matchScene'
+import type { Side } from './gameTypes'
 
 let current: Phaser.Game | null = null
 
 export function destroyGame(): void {
+  const sc = current?.scene.getScene('match') as { shutdown?: () => void } | undefined
+  sc?.shutdown?.()
   current?.destroy(true)
   current = null
 }
@@ -37,7 +42,7 @@ export function startPhaserPlaceholder(
             400,
             240,
             mode === 'bot'
-              ? 'Режим: игра с ботом'
+              ? 'Режим: игра с ботом (эпик 05)'
               : mode === 'online'
                 ? 'Режим: онлайн-матч'
                 : 'Режим: создать игру',
@@ -45,7 +50,7 @@ export function startPhaserPlaceholder(
           )
           .setOrigin(0.5)
         scene.add
-          .text(400, 300, 'Игровой процесс — эпик 03 и далее', {
+          .text(400, 300, 'Онлайн-матч запускается из лобби после отсчёта.', {
             fontSize: '15px',
             color: '#6c6c7c',
             fontFamily: 'system-ui, sans-serif',
@@ -53,5 +58,24 @@ export function startPhaserPlaceholder(
           .setOrigin(0.5)
       },
     },
+  })
+}
+
+export function startOnlineMatch(
+  rootId: string,
+  mySide: Side,
+  socket: Socket,
+  nickname: string,
+  onMatchEnd: MatchSceneOpts['onMatchEnd'],
+): void {
+  destroyGame()
+  const el = document.getElementById(rootId)
+  if (!el) return
+  el.innerHTML = ''
+  current = createMatchGame(rootId, {
+    socket,
+    mySide,
+    nickname,
+    onMatchEnd,
   })
 }

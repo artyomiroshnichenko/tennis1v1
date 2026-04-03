@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { Server } from 'socket.io'
+import { MatchController } from '../game/MatchController'
 import type { ManagedRoom, LobbyPlayer, LobbyChatMessage, RoomJoinedPlayer } from './types'
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -95,6 +96,8 @@ export class RoomManager {
 
   private destroyRoom(room: ManagedRoom, notify: boolean): void {
     this.clearRoomTimers(room)
+    room.match?.stop()
+    room.match = undefined
     if (notify) {
       this.io.to(`room:${room.id}`).emit('room:closed')
     }
@@ -177,11 +180,12 @@ export class RoomManager {
     const r = this.roomsById.get(room.id)
     if (!r || r.phase !== 'countdown') return
     r.phase = 'playing'
-    const initialState = {
-      phase: 'placeholder' as const,
-      hint: 'Эпик 03 — игровой процесс',
-    }
-    this.io.to(`room:${r.id}`).emit('game:start', { initialState })
+    const host = r.players.find((p) => p.isHost)
+    const guest = r.players.find((p) => !p.isHost)
+    if (!host || !guest) return
+    r.match = new MatchController(this.io, r.id, host.socketId, guest.socketId, () => {
+      r.match = undefined
+    })
   }
 
   createRoom(socketId: string, nickname: string, subjectId: string, ip: string): ManagedRoom | { error: string; message: string } {
@@ -256,9 +260,31 @@ export class RoomManager {
     return room
   }
 
+  handleGameInputMove(socketId: string, payload: { dx?: unknown; dy?: unknown }): void {
+    const room = this.getRoomBySocket(socketId)
+    if (!room?.match) return
+    const dx = typeof payload.dx === 'number' ? payload.dx : 0
+    const dy = typeof payload.dy === 'number' ? payload.dy : 0
+    room.match.setMove(socketId, dx, dy)
+  }
+
+  handleGameInputIndicator(socketId: string, payload: { phase?: unknown; value?: unknown }): void {
+    const room = this.getRoomBySocket(socketId)
+    if (!room?.match) return
+    const ph = payload.phase
+    const v = payload.value
+    if (ph !== 'direction' && ph !== 'power') return
+    if (typeof v !== 'number') return
+    room.match.applyIndicator(socketId, ph, v)
+  }
+
   leaveSocket(socketId: string): void {
     const room = this.getRoomBySocket(socketId)
     if (!room) return
+
+    if (room.match) {
+      room.match.forfeitDisconnected(socketId)
+    }
 
     const player = room.players.find((p) => p.socketId === socketId)
     if (!player) return
