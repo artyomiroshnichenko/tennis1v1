@@ -52,7 +52,7 @@ export function registerLobbySocket(io: Server): void {
           typeof socket.handshake.headers['x-forwarded-for'] === 'string'
             ? socket.handshake.headers['x-forwarded-for'].split(',')[0]!.trim()
             : socket.handshake.address ?? 'unknown'
-        const created = rooms.createRoom(socket.id, nickname, auth.sub, ip)
+        const created = rooms.createRoom(socket.id, nickname, auth.sub, auth.typ, ip)
         if ('error' in created) {
           socketError(socket, created.error, created.message)
           return
@@ -75,7 +75,7 @@ export function registerLobbySocket(io: Server): void {
           return
         }
         const nickname = readNickname(socket, payload?.nickname)
-        const joined = rooms.joinRoom(socket.id, code, nickname, auth.sub)
+        const joined = rooms.joinRoom(socket.id, code, nickname, auth.sub, auth.typ)
         if ('error' in joined) {
           socketError(socket, joined.error, joined.message)
           return
@@ -91,7 +91,12 @@ export function registerLobbySocket(io: Server): void {
     })
 
     socket.on('room:leave', () => {
+      rooms.leaveSpectator(socket.id)
       rooms.leaveSocket(socket.id)
+    })
+
+    socket.on('room:rematch', () => {
+      rooms.handleRematch(socket.id)
     })
 
     socket.on('game:input:move', (payload: { dx?: number; dy?: number } | undefined) => {
@@ -119,15 +124,29 @@ export function registerLobbySocket(io: Server): void {
       }
     })
 
-    socket.on('spectator:join', () => {
-      socketError(
-        socket,
-        'INVALID_PHASE',
-        'Наблюдатели подключаются только после старта матча',
-      )
+    socket.on('spectator:join', (payload: { code?: string }) => {
+      try {
+        const code = payload?.code
+        if (typeof code !== 'string' || !code.trim()) {
+          socketError(socket, 'VALIDATION_ERROR', 'Укажите код комнаты')
+          return
+        }
+        const nickname = readNickname(socket, undefined)
+        const joined = rooms.joinAsSpectator(socket.id, code, nickname, auth.sub)
+        if ('error' in joined) {
+          socketError(socket, joined.error, joined.message)
+        }
+      } catch (e) {
+        if (e instanceof NicknameValidationError) {
+          socketError(socket, 'VALIDATION_ERROR', e.message)
+          return
+        }
+        socketError(socket, 'INTERNAL_ERROR', 'Не удалось подключиться как наблюдатель')
+      }
     })
 
     socket.on('disconnect', () => {
+      rooms.leaveSpectator(socket.id)
       rooms.leaveSocket(socket.id)
     })
   })

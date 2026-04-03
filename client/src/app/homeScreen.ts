@@ -13,7 +13,7 @@ import { getFirebaseAuth, firebaseConfigured } from '../firebaseApp'
 import { validateNicknameInput } from '../nicknameRules'
 import { LS_ACCESS, LS_NICKNAME, LS_REFRESH } from '../sessionKeys'
 import { destroyGame, startPhaserPlaceholder } from '../game/startPhaser'
-import { openLobbyCreate, openLobbyJoin } from './lobbyScreen'
+import { openLobbyCreate, openLobbyJoin, openSpectatorJoin } from './lobbyScreen'
 import '../ui/home.css'
 
 type ProfileState =
@@ -200,20 +200,105 @@ function openNicknameModal(afterSubmit?: () => void): void {
   })
 }
 
-async function fetchHistory(): Promise<
-  Array<{
-    matchId: string
-    type: string
-    status: string
-    isWinner: boolean
-    createdAt: string
-  }>
-> {
-  const res = await apiJsonWithRefresh<{ items: Array<{ matchId: string; type: string; status: string; isWinner: boolean; createdAt: string }> }>(
-    '/matches/history',
-  )
+type HistoryItem = {
+  matchId: string
+  type: string
+  status: string
+  sets: unknown
+  isWinner: boolean
+  createdAt: string
+  finishedAt: string | null
+  opponent: string
+  outcome: 'win' | 'loss' | 'technical_win' | 'technical_loss'
+}
+
+async function fetchHistory(): Promise<HistoryItem[]> {
+  const res = await apiJsonWithRefresh<{ items: HistoryItem[] }>('/matches/history')
   return res.items
 }
+
+function outcomeLabel(o: HistoryItem['outcome']): string {
+  switch (o) {
+    case 'win':
+      return 'Победа'
+    case 'loss':
+      return 'Поражение'
+    case 'technical_win':
+      return 'Победа (техн.)'
+    case 'technical_loss':
+      return 'Техн. поражение'
+    default:
+      return o
+  }
+}
+
+function formatHistorySets(sets: unknown): string {
+  if (!Array.isArray(sets)) return ''
+  return sets
+    .map((s) => {
+      if (Array.isArray(s) && s.length >= 2) return `${s[0]}–${s[1]}`
+      return ''
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
+async function showMatchHistoryPage(): Promise<void> {
+  appRoot.innerHTML = ''
+  const wrap = document.createElement('div')
+  wrap.style.cssText = 'max-width:36rem;width:100%;padding:1rem'
+  const head = document.createElement('div')
+  head.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:1rem;flex-wrap:wrap'
+  const back = document.createElement('button')
+  back.type = 'button'
+  back.className = 'btn-secondary'
+  back.textContent = '← На главную'
+  back.addEventListener('click', () => {
+    const u = new URL(window.location.href)
+    u.searchParams.delete('history')
+    window.history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash)
+    render()
+  })
+  const h = document.createElement('h1')
+  h.className = 'home-title'
+  h.style.margin = '0'
+  h.textContent = 'История матчей'
+  head.append(back, h)
+  const body = document.createElement('div')
+  body.textContent = 'Загрузка…'
+  wrap.append(head, body)
+  appRoot.appendChild(wrap)
+
+  try {
+    const items = await fetchHistory()
+    body.textContent = ''
+    if (!items.length) {
+      body.textContent = 'Пока нет завершённых матчей'
+      return
+    }
+    const ul = document.createElement('ul')
+    ul.style.cssText = 'list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:12px'
+    for (const it of items) {
+      const li = document.createElement('li')
+      li.style.cssText =
+        'padding:12px 14px;border-radius:10px;background:rgba(255,255,255,0.06);color:#e8e8f0;font:15px system-ui,sans-serif'
+      const when = new Date(it.finishedAt ?? it.createdAt).toLocaleString('ru-RU')
+      const setsStr = formatHistorySets(it.sets)
+      const strong = document.createElement('strong')
+      strong.textContent = it.opponent
+      const meta = document.createElement('div')
+      meta.style.color = '#a8a8b8'
+      meta.style.marginTop = '4px'
+      meta.textContent = `${setsStr} · ${outcomeLabel(it.outcome)} · ${when}`
+      li.append(strong, meta)
+      ul.appendChild(li)
+    }
+    body.appendChild(ul)
+  } catch {
+    body.textContent = 'Не удалось загрузить историю'
+  }
+}
+
 
 function openProfileModal(): void {
   closeModals()
@@ -252,8 +337,9 @@ function openProfileModal(): void {
       ul.className = 'history-list'
       for (const it of items) {
         const li = document.createElement('li')
-        const date = new Date(it.createdAt).toLocaleString('ru-RU')
-        li.textContent = `${date} · ${it.type} · ${it.isWinner ? 'победа' : 'поражение'}`
+        const date = new Date(it.finishedAt ?? it.createdAt).toLocaleString('ru-RU')
+        const setsStr = formatHistorySets(it.sets)
+        li.textContent = `${it.opponent} · ${setsStr || '—'} · ${outcomeLabel(it.outcome)} · ${date}`
         ul.appendChild(li)
       }
       histEl.innerHTML = '<h3>История матчей</h3>'
@@ -604,10 +690,22 @@ function render(): void {
     account.textContent = 'Загрузка…'
   } else if (isUser) {
     account.append('Вы вошли как зарегистрированный игрок. ')
+    const histBtn = document.createElement('button')
+    histBtn.type = 'button'
+    histBtn.className = 'link'
+    histBtn.textContent = 'История матчей'
+    histBtn.addEventListener('click', () => {
+      const u = new URL(window.location.href)
+      u.searchParams.set('history', '1')
+      window.history.replaceState({}, '', u.toString())
+      void showMatchHistoryPage()
+    })
+    account.appendChild(histBtn)
+    account.append(' · ')
     const pBtn = document.createElement('button')
     pBtn.type = 'button'
     pBtn.className = 'link'
-    pBtn.textContent = 'Профиль и история'
+    pBtn.textContent = 'Профиль'
     pBtn.addEventListener('click', () => openProfileModal())
     account.appendChild(pBtn)
     account.append(' · ')
@@ -686,7 +784,37 @@ export async function mountHome(root: HTMLElement): Promise<void> {
   appRoot = root
   await restoreSession()
   subscribeFirebaseAuth()
-  const roomParam = new URLSearchParams(window.location.search).get('room')
+  const params = new URLSearchParams(window.location.search)
+  const roomParam = params.get('room')
+  const watch = params.get('watch')
+
+  if (roomParam?.trim() && watch === '1') {
+    try {
+      const nickname = await ensureReadyToPlay()
+      await openSpectatorJoin({
+        code: roomParam.trim(),
+        nickname,
+        onLeave: () => {
+          showHomeView()
+          render()
+        },
+      })
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Не удалось подключиться')
+      render()
+    }
+    return
+  }
+
+  if (params.get('history') === '1') {
+    if (profile.kind !== 'user') {
+      render()
+      return
+    }
+    await showMatchHistoryPage()
+    return
+  }
+
   if (roomParam?.trim()) {
     await joinRoomFromInvite(roomParam.trim())
     return

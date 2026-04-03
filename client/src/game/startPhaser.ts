@@ -67,6 +67,7 @@ export function startOnlineMatch(
   socket: Socket,
   nickname: string,
   onMatchEnd: MatchSceneOpts['onMatchEnd'],
+  opts?: { spectator?: boolean },
 ): void {
   destroyGame()
   const el = document.getElementById(rootId)
@@ -76,6 +77,7 @@ export function startOnlineMatch(
     socket,
     mySide,
     nickname,
+    spectator: opts?.spectator,
     onMatchEnd,
   })
 }

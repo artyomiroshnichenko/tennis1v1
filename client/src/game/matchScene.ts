@@ -12,7 +12,14 @@ export type MatchSceneOpts = {
   socket: Socket
   mySide: Side
   nickname: string
-  onMatchEnd: (payload: { winner: Side; reason: string }) => void
+  /** Наблюдатель: без ввода, нейтральные подписи */
+  spectator?: boolean
+  onMatchEnd: (payload: {
+    winner: Side
+    reason: string
+    sets: [number, number][]
+    technical?: boolean
+  }) => void
 }
 
 let matchBootstrap: MatchSceneOpts | null = null
@@ -54,7 +61,7 @@ export class MatchScene extends Phaser.Scene {
   private ox = 0
   private oy = 0
   private scalePx = 1
-  private keys!: {
+  private keys?: {
     w: Phaser.Input.Keyboard.Key
     a: Phaser.Input.Keyboard.Key
     s: Phaser.Input.Keyboard.Key
@@ -79,6 +86,7 @@ export class MatchScene extends Phaser.Scene {
     this.lastState = s
   }
   private readonly onIndicator = (p: { phase: 'direction' | 'power' }): void => {
+    if (this.opts.spectator) return
     this.showIndicator(p.phase)
   }
   private readonly onPoint = (p: { reason: string; score: Score }): void => {
@@ -128,11 +136,23 @@ export class MatchScene extends Phaser.Scene {
     matchAudio.sidesChange()
     this.startSidesFlipAnimation()
   }
-  private readonly onOver = (p: { winner: Side; reason: string }): void => {
-    if (p.winner === this.opts.mySide) matchAudio.matchWin()
-    else matchAudio.matchLose()
+  private readonly onOver = (p: {
+    winner: Side
+    reason: string
+    sets?: [number, number][]
+    technical?: boolean
+  }): void => {
+    if (!this.opts.spectator) {
+      if (p.winner === this.opts.mySide) matchAudio.matchWin()
+      else matchAudio.matchLose()
+    }
     this.hideIndicator()
-    this.opts.onMatchEnd({ winner: p.winner, reason: p.reason })
+    this.opts.onMatchEnd({
+      winner: p.winner,
+      reason: p.reason,
+      sets: p.sets ?? [],
+      technical: p.technical,
+    })
   }
 
   constructor() {
@@ -203,7 +223,7 @@ export class MatchScene extends Phaser.Scene {
       .setDepth(10)
 
     const kbd = this.input.keyboard
-    if (kbd) {
+    if (kbd && !this.opts.spectator) {
       this.keys = {
         w: kbd.addKey(Phaser.Input.Keyboard.KeyCodes.W),
         a: kbd.addKey(Phaser.Input.Keyboard.KeyCodes.A),
@@ -225,7 +245,9 @@ export class MatchScene extends Phaser.Scene {
     sock.on('game:sides:change', this.onSides)
     sock.on('game:over', this.onOver)
 
-    this.input.on('pointerdown', this.onPointerDown, this)
+    if (!this.opts.spectator) {
+      this.input.on('pointerdown', this.onPointerDown, this)
+    }
 
     this.layoutCourt(width, height)
     this.scale.on('resize', this.onResize, this)
@@ -274,6 +296,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private readonly onPointerDown = (p: Phaser.Input.Pointer): void => {
+    if (this.opts.spectator) return
     if (this.indicatorMode) {
       this.commitIndicator()
       return
@@ -421,7 +444,13 @@ export class MatchScene extends Phaser.Scene {
       this.drawCourt()
       this.drawBodies(s)
       this.scoreText.setText(this.formatScore(s))
-      const srv = s.serving === this.opts.mySide ? 'Ваша подача' : 'Подача соперника'
+      const srv = this.opts.spectator
+        ? s.serving === 'left'
+          ? 'Подача слева'
+          : 'Подача справа'
+        : s.serving === this.opts.mySide
+          ? 'Ваша подача'
+          : 'Подача соперника'
       this.serveText.setText(s.phase === 'serving' || s.phase === 'playing' ? srv : '')
     }
 
@@ -435,36 +464,38 @@ export class MatchScene extends Phaser.Scene {
       this.commitIndicator()
     }
 
-    let vr = 0
-    let vu = 0
-    if (this.keys) {
+    let dx = 0
+    let dy = 0
+    if (!this.opts.spectator && this.keys) {
+      let vr = 0
+      let vu = 0
       if (this.keys.a.isDown || this.keys.left.isDown) vr -= 1
       if (this.keys.d.isDown || this.keys.right.isDown) vr += 1
       if (this.keys.w.isDown || this.keys.up.isDown) vu += 1
       if (this.keys.s.isDown || this.keys.down.isDown) vu -= 1
-    }
-    let dx = vr
-    let dy = this.opts.mySide === 'left' ? -vu : vu
-    const l = Math.hypot(dx, dy)
-    if (l > 1e-6) {
-      dx /= l
-      dy /= l
-    }
+      dx = vr
+      dy = this.opts.mySide === 'left' ? -vu : vu
+      const l = Math.hypot(dx, dy)
+      if (l > 1e-6) {
+        dx /= l
+        dy /= l
+      }
 
-    if (this.pointerTarget && s && (s.phase === 'playing' || s.phase === 'serving')) {
-      const self = this.opts.mySide === 'left' ? s.players.left : s.players.right
-      const xM = self.x * COURT_W
-      const yM = self.y * COURT_L
-      const tx = this.pointerTarget.xM - xM
-      const ty = this.pointerTarget.yM - yM
-      const ll = Math.hypot(tx, ty)
-      if (ll < 0.15) {
-        this.pointerTarget = null
-        dx = 0
-        dy = 0
-      } else {
-        dx = tx / ll
-        dy = ty / ll
+      if (this.pointerTarget && s && (s.phase === 'playing' || s.phase === 'serving')) {
+        const self = this.opts.mySide === 'left' ? s.players.left : s.players.right
+        const xM = self.x * COURT_W
+        const yM = self.y * COURT_L
+        const tx = this.pointerTarget.xM - xM
+        const ty = this.pointerTarget.yM - yM
+        const ll = Math.hypot(tx, ty)
+        if (ll < 0.15) {
+          this.pointerTarget = null
+          dx = 0
+          dy = 0
+        } else {
+          dx = tx / ll
+          dy = ty / ll
+        }
       }
     }
 
@@ -486,9 +517,13 @@ export class MatchScene extends Phaser.Scene {
       pts =
         s.score.advantage === null
           ? 'Ровно'
-          : s.score.advantage === this.opts.mySide
-            ? 'ВП'
-            : 'ВП соперника'
+          : this.opts.spectator
+            ? s.score.advantage === 'left'
+              ? 'ВП слева'
+              : 'ВП справа'
+            : s.score.advantage === this.opts.mySide
+              ? 'ВП'
+              : 'ВП соперника'
     } else {
       pts = `${s.score.points[0]}-${s.score.points[1]}`
     }
@@ -532,7 +567,9 @@ export class MatchScene extends Phaser.Scene {
       sock.off('game:sides:change', this.onSides)
       sock.off('game:over', this.onOver)
     }
-    this.input.off('pointerdown', this.onPointerDown, this)
+    if (!this.opts.spectator) {
+      this.input.off('pointerdown', this.onPointerDown, this)
+    }
     this.scale.off('resize', this.onResize, this)
     this.hideIndicator()
     this.indicatorEl?.remove()

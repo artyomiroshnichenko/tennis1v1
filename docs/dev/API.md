@@ -97,7 +97,7 @@ socket.emit('error', { code: string, message: string })
 | `game:input:indicator` | `{ phase: 'direction' \| 'power', value: number }` | Нажатие индикатора удара — фаза и позиция (0–1) |
 | `chat:message` | `{ text }` | Отправить сообщение в чат |
 | `chat:reaction` | `{ type: 'heart' \| 'fire' \| 'cry' \| 'halo' \| 'angry' }` | Отправить реакцию |
-| `spectator:join` | `{ code }` | Подключиться как наблюдатель |
+| `spectator:join` | `{ code }` | Подключиться как наблюдатель (во время матча или на экране результата) |
 
 #### Server → Client
 
@@ -118,7 +118,9 @@ socket.emit('error', { code: string, message: string })
 | `game:sides:change` | — | Смена сторон |
 | `game:pause` | `{ reason: 'disconnect', seconds }` | Пауза с обратным отсчётом |
 | `game:resume` | — | Матч продолжается |
-| `game:over` | `{ winner, sets, reason }` | Матч завершён |
+| `game:over` | `{ winner, sets, reason, technical? }` | Матч завершён; `technical` — отключение соперника |
+| `room:rematch:state` | `{ youReady, peerReady }` | Согласие на реванш (только игрокам) |
+| `spectator:joined` | `{ players, phase }` | Наблюдатель в комнате; `phase`: `playing` \| `result` |
 | `chat:message` | `{ from, text, timestamp }` | Новое сообщение в чате |
 | `chat:reaction` | `{ from, type }` | Реакция от участника |
 | `spectator:count` | `{ count }` | Обновление числа наблюдателей |

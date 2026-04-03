@@ -1,7 +1,14 @@
 import { randomUUID } from 'crypto'
 import type { Server } from 'socket.io'
 import { MatchController } from '../game/MatchController'
-import type { ManagedRoom, LobbyPlayer, LobbyChatMessage, RoomJoinedPlayer } from './types'
+import { persistOnlineMatch } from '../match/persistOnlineMatch'
+import type {
+  ManagedRoom,
+  LobbyChatMessage,
+  RoomJoinedPlayer,
+  RoomSpectator,
+  AuthKind,
+} from './types'
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const COUNTDOWN_SECONDS = 15
@@ -12,6 +19,7 @@ const TEN_MIN_MS = 10 * 60 * 1000
 const CHAT_MAX_LEN = 500
 const CHAT_BURST = 12
 const CHAT_BURST_WINDOW_MS = 10_000
+const MAX_SPECTATORS = 2
 
 function randomCode(length = 6): string {
   let s = ''
@@ -35,6 +43,7 @@ export class RoomManager {
   private readonly roomsById = new Map<string, ManagedRoom>()
   private readonly roomsByCode = new Map<string, ManagedRoom>()
   private readonly socketToRoomId = new Map<string, string>()
+  private readonly spectatorToRoomId = new Map<string, string>()
   /** Сколько комнат сейчас «ведёт» субъект (hostSubjectId) */
   private readonly activeRoomsByHostSubject = new Map<string, number>()
   private readonly roomCreateTimestampsByIp: Map<string, number[]> = new Map()
@@ -106,6 +115,12 @@ export class RoomManager {
       const sock = this.io.sockets.sockets.get(p.socketId)
       sock?.leave(`room:${room.id}`)
     }
+    for (const s of room.spectators) {
+      this.spectatorToRoomId.delete(s.socketId)
+      const sock = this.io.sockets.sockets.get(s.socketId)
+      sock?.leave(`room:${room.id}`)
+    }
+    room.spectators = []
     this.roomsById.delete(room.id)
     this.roomsByCode.delete(room.code)
     this.releaseHostSlot(room.creatorSubjectId)
@@ -157,6 +172,15 @@ export class RoomManager {
     }
   }
 
+  private emitRematchState(room: ManagedRoom): void {
+    for (const p of room.players) {
+      const youReady = room.rematchReady.has(p.socketId)
+      const peer = room.players.find((o) => o.socketId !== p.socketId)
+      const peerReady = peer ? room.rematchReady.has(peer.socketId) : false
+      this.io.to(p.socketId).emit('room:rematch:state', { youReady, peerReady })
+    }
+  }
+
   private startCountdown(room: ManagedRoom): void {
     this.cancelIdleTimer(room)
     if (room.countdownTimer) clearInterval(room.countdownTimer)
@@ -183,12 +207,27 @@ export class RoomManager {
     const host = r.players.find((p) => p.isHost)
     const guest = r.players.find((p) => !p.isHost)
     if (!host || !guest) return
-    r.match = new MatchController(this.io, r.id, host.socketId, guest.socketId, () => {
-      r.match = undefined
+    r.rematchReady.clear()
+    r.match = new MatchController(this.io, r.id, host.socketId, guest.socketId, {
+      onStopped: () => {
+        r.match = undefined
+      },
+      onOver: (p) => {
+        void persistOnlineMatch(r, p.winner, p.sets, p.reason)
+        r.phase = 'result'
+        r.rematchReady.clear()
+        this.emitRematchState(r)
+      },
     })
   }
 
-  createRoom(socketId: string, nickname: string, subjectId: string, ip: string): ManagedRoom | { error: string; message: string } {
+  createRoom(
+    socketId: string,
+    nickname: string,
+    subjectId: string,
+    authType: AuthKind,
+    ip: string,
+  ): ManagedRoom | { error: string; message: string } {
     const gate = this.canCreateRoom(ip, subjectId)
     if (!gate.ok) return { error: gate.code, message: gate.message }
 
@@ -204,9 +243,12 @@ export class RoomManager {
           socketId,
           nickname,
           subjectId,
+          authType,
           isHost: true,
         },
       ],
+      spectators: [],
+      rematchReady: new Set(),
       phase: 'waiting',
       lobbyChat: [],
       createdAt: Date.now(),
@@ -224,6 +266,7 @@ export class RoomManager {
     codeRaw: string,
     nickname: string,
     subjectId: string,
+    authType: AuthKind,
   ): ManagedRoom | { error: string; message: string } {
     const code = codeRaw.trim().toUpperCase()
     const room = this.roomsByCode.get(code)
@@ -244,6 +287,7 @@ export class RoomManager {
       socketId,
       nickname,
       subjectId,
+      authType,
       isHost: false,
     })
     this.socketToRoomId.set(socketId, room.id)
@@ -252,12 +296,85 @@ export class RoomManager {
     if (room.players.length === 2) {
       if (room.phase === 'waiting') {
         this.startCountdown(room)
+      } else if (room.phase === 'result') {
+        this.emitRoomJoined(room)
       } else {
         this.emitRoomJoined(room)
       }
     }
 
     return room
+  }
+
+  joinAsSpectator(
+    socketId: string,
+    codeRaw: string,
+    nickname: string,
+    subjectId: string,
+  ): ManagedRoom | { error: string; message: string } {
+    const code = codeRaw.trim().toUpperCase()
+    const room = this.roomsByCode.get(code)
+    if (!room) {
+      return { error: 'ROOM_NOT_FOUND', message: 'Комната не найдена' }
+    }
+    if (room.phase !== 'playing' && room.phase !== 'result') {
+      return {
+        error: 'INVALID_PHASE',
+        message: 'Наблюдение доступно во время матча или на экране результата',
+      }
+    }
+    if (room.spectators.length >= MAX_SPECTATORS) {
+      return { error: 'SPECTATORS_FULL', message: 'Наблюдателей не больше двух' }
+    }
+    if (room.players.some((p) => p.socketId === socketId)) {
+      return { error: 'INVALID_PHASE', message: 'Вы уже в комнате как игрок' }
+    }
+    if (room.spectators.some((s) => s.socketId === socketId)) {
+      return { error: 'INVALID_PHASE', message: 'Вы уже наблюдаете' }
+    }
+
+    const spec: RoomSpectator = { socketId, nickname, subjectId }
+    room.spectators.push(spec)
+    this.spectatorToRoomId.set(socketId, room.id)
+    this.attachSocketToRoom(socketId, room.id)
+
+    this.io.to(socketId).emit('spectator:joined', {
+      players: this.buildPlayersPayload(room),
+      phase: room.phase,
+    })
+    this.io.to(`room:${room.id}`).emit('spectator:count', { count: room.spectators.length })
+
+    const m = room.match
+    if (room.phase === 'playing' && m) {
+      const initialState = m.getWireState()
+      this.io.to(socketId).emit('game:start', { initialState })
+    }
+
+    return room
+  }
+
+  leaveSpectator(socketId: string): void {
+    const roomId = this.spectatorToRoomId.get(socketId)
+    if (!roomId) return
+    const room = this.roomsById.get(roomId)
+    this.spectatorToRoomId.delete(socketId)
+    if (!room) return
+    room.spectators = room.spectators.filter((s) => s.socketId !== socketId)
+    const sock = this.io.sockets.sockets.get(socketId)
+    sock?.leave(`room:${room.id}`)
+    this.io.to(`room:${room.id}`).emit('spectator:count', { count: room.spectators.length })
+  }
+
+  handleRematch(socketId: string): void {
+    const room = this.getRoomBySocket(socketId)
+    if (!room || room.phase !== 'result') return
+    if (!room.players.some((p) => p.socketId === socketId)) return
+    room.rematchReady.add(socketId)
+    this.emitRematchState(room)
+    if (room.rematchReady.size >= 2 && room.players.length === 2) {
+      room.rematchReady.clear()
+      this.startCountdown(room)
+    }
   }
 
   handleGameInputMove(socketId: string, payload: { dx?: unknown; dy?: unknown }): void {
@@ -289,6 +406,8 @@ export class RoomManager {
     const player = room.players.find((p) => p.socketId === socketId)
     if (!player) return
 
+    room.rematchReady.delete(socketId)
+
     const wasHost = player.isHost
     const hadTwo = room.players.length === 2
     room.players = room.players.filter((p) => p.socketId !== socketId)
@@ -319,6 +438,8 @@ export class RoomManager {
     } else if (room.phase === 'waiting') {
       this.emitRoomJoined(room)
       this.startIdleTimer(room)
+    } else if (room.phase === 'result') {
+      this.emitRematchState(room)
     }
   }
 
@@ -327,7 +448,7 @@ export class RoomManager {
     if (!room) {
       return { error: 'NOT_IN_ROOM', message: 'Вы не в комнате' }
     }
-    if (room.phase === 'playing') {
+    if (room.phase === 'playing' || room.phase === 'result') {
       return { error: 'INVALID_PHASE', message: 'Лобби-чат недоступен' }
     }
     const text = textRaw.trim()

@@ -1,6 +1,8 @@
 import type { MatchController } from '../game/MatchController'
 
-export type RoomPhase = 'waiting' | 'countdown' | 'playing'
+export type RoomPhase = 'waiting' | 'countdown' | 'playing' | 'result'
+
+export type AuthKind = 'guest' | 'user'
 
 export type LobbyChatMessage = {
   from: string
@@ -12,7 +14,14 @@ export type LobbyPlayer = {
   socketId: string
   nickname: string
   subjectId: string
+  authType: AuthKind
   isHost: boolean
+}
+
+export type RoomSpectator = {
+  socketId: string
+  nickname: string
+  subjectId: string
 }
 
 export type ManagedRoom = {
@@ -23,6 +32,9 @@ export type ManagedRoom = {
   /** Текущий хост в лобби (может смениться) */
   hostSubjectId: string
   players: LobbyPlayer[]
+  spectators: RoomSpectator[]
+  /** Сокеты игроков, нажавших «Сыграть ещё раз» */
+  rematchReady: Set<string>
   phase: RoomPhase
   lobbyChat: LobbyChatMessage[]
   createdAt: number

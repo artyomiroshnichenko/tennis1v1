@@ -5,6 +5,13 @@ import type { PendingEmit } from './matchEngine'
 import { currentServer } from './scoring'
 import type { GameStateWire, Side } from './types'
 
+export type MatchOverPayload = {
+  winner: Side
+  sets: [number, number][]
+  reason: string
+  technical: boolean
+}
+
 export class MatchController {
   private readonly engine: MatchEngine
   private readonly socketToSide = new Map<string, Side>()
@@ -17,7 +24,10 @@ export class MatchController {
     private readonly roomId: string,
     hostSocketId: string,
     guestSocketId: string,
-    private readonly onStopped: () => void,
+    private readonly lifecycle: {
+      onStopped: () => void
+      onOver?: (p: MatchOverPayload) => void
+    },
   ) {
     this.socketToSide.set(hostSocketId, 'left')
     this.socketToSide.set(guestSocketId, 'right')
@@ -85,10 +95,18 @@ export class MatchController {
       const sets: [number, number][] = this.engine.score.completedSets.map(
         (g) => [g[0]!, g[1]!],
       )
+      const technical = e.over.reason === 'Соперник вышел'
+      this.lifecycle.onOver?.({
+        winner: e.over.winner,
+        sets,
+        reason: e.over.reason,
+        technical,
+      })
       this.io.to(rn).emit('game:over', {
         winner: e.over.winner,
         sets,
         reason: e.over.reason,
+        technical,
       })
       this.stop()
     }
@@ -101,7 +119,11 @@ export class MatchController {
       clearInterval(this.timer)
       this.timer = null
     }
-    this.onStopped()
+    this.lifecycle.onStopped()
+  }
+
+  getWireState(): GameStateWire {
+    return this.engine.getWireState()
   }
 
   setMove(socketId: string, dx: number, dy: number): void {

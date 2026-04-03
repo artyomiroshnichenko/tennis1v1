@@ -46,14 +46,17 @@ enum MatchStatus {
 }
 
 model MatchPlayer {
-  id       String  @id @default(uuid())
-  matchId  String
-  userId   String
-  side     String
-  isWinner Boolean
+  id            String  @id @default(uuid())
+  matchId       String
+  /// Для зарегистрированного игрока; для гостя — null
+  userId        String?
+  /// Ник соперника-гостя, если userId отсутствует
+  guestNickname String?
+  side          String
+  isWinner      Boolean
 
   match Match @relation(fields: [matchId], references: [id])
-  user  User  @relation(fields: [userId], references: [id])
+  user  User? @relation(fields: [userId], references: [id])
 }
 
 enum AuthSubjectType {
