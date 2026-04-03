@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# TLS на проде (Let's Encrypt и т.д.) — только на сервере, не в Git
+nginx/ssl/
+
 # Environment variables — никогда не коммитить
 .env
 server/.env
