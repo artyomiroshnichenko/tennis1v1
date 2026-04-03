@@ -183,6 +183,13 @@ export function registerLobbySocket(io: Server): void {
       }
     })
 
+    socket.on('chat:reaction', (payload: { type?: string }) => {
+      const res = rooms.appendReaction(socket.id, payload?.type)
+      if ('error' in res) {
+        socketError(socket, res.error, res.message)
+      }
+    })
+
     socket.on('spectator:join', (payload: { code?: string }) => {
       try {
         const code = payload?.code

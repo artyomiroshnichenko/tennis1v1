@@ -37,6 +37,8 @@ export type ManagedRoom = {
   rematchReady: Set<string>
   phase: RoomPhase
   lobbyChat: LobbyChatMessage[]
+  /** Сообщения с начала текущего матча (playing + result) — для поздних наблюдателей */
+  matchChat: LobbyChatMessage[]
   createdAt: number
   countdownTimer?: ReturnType<typeof setInterval>
   idleTimer?: ReturnType<typeof setTimeout>

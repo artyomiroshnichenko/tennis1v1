@@ -161,12 +161,59 @@
 .lobby-chat {
   display: flex;
   flex-direction: column;
-  height: 220px;
+  margin-bottom: 0.75rem;
   background: #16162a;
   border: 1px solid #2a2a40;
   border-radius: 10px;
   overflow: hidden;
-  margin-bottom: 0.75rem;
+}
+
+.lobby-chat-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid #2a2a40;
+  background: #1a1a2e;
+}
+
+.lobby-chat-head .btn-secondary {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.lobby-chat-unread {
+  display: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff6b8a;
+  box-shadow: 0 0 6px #ff6b8a;
+}
+
+.lobby-chat-body {
+  display: flex;
+  flex-direction: column;
+  height: 220px;
+}
+
+.lobby-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid #2a2a40;
+  background: #141428;
+}
+
+.lobby-reactions button {
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+  border-radius: 8px;
+  border: 1px solid #3d3d55;
+  background: #22223a;
+  cursor: pointer;
 }
 
 .lobby-chat-msgs {

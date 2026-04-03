@@ -89,6 +89,53 @@ export class MatchScene extends Phaser.Scene {
   private pauseCountdownTimer: ReturnType<typeof setInterval> | null = null
   private visibilityListener?: () => void
 
+  private readonly onChatReaction = (p: {
+    type: string
+    anchor?: string
+  }): void => {
+    const map: Record<string, string> = {
+      heart: '❤️',
+      fire: '🔥',
+      cry: '😭',
+      halo: '😇',
+      angry: '😡',
+    }
+    const emoji = map[p.type] ?? '💬'
+    const a = p.anchor ?? 'spectator'
+    const target = a === 'right' ? this.rightG : a === 'left' ? this.leftG : this.ballG
+    const t = this.add
+      .text(target.x, target.y - 52, emoji, { fontSize: '42px', fontFamily: 'system-ui, sans-serif' })
+      .setOrigin(0.5)
+    this.courtLayer.add(t)
+    switch (p.type) {
+      case 'heart':
+        matchAudio.reactionHeart()
+        break
+      case 'fire':
+        matchAudio.reactionFire()
+        break
+      case 'cry':
+        matchAudio.reactionCry()
+        break
+      case 'halo':
+        matchAudio.reactionHalo()
+        break
+      case 'angry':
+        matchAudio.reactionAngry()
+        break
+      default:
+        matchAudio.point()
+    }
+    this.tweens.add({
+      targets: t,
+      y: t.y - 48,
+      alpha: 0,
+      duration: 2600,
+      ease: 'Sine.easeOut',
+      onComplete: () => t.destroy(),
+    })
+  }
+
   private readonly onState = (s: GameStateWire): void => {
     this.lastState = s
   }
@@ -337,6 +384,7 @@ export class MatchScene extends Phaser.Scene {
     } else {
       sock.on('game:pause', this.onGamePause)
       sock.on('game:resume', this.onGameResume)
+      sock.on('chat:reaction', this.onChatReaction)
     }
 
     if (!this.opts.spectator) {
@@ -666,6 +714,7 @@ export class MatchScene extends Phaser.Scene {
       sock.off('game:over', this.onOver)
       sock.off('game:pause', this.onGamePause)
       sock.off('game:resume', this.onGameResume)
+      sock.off('chat:reaction', this.onChatReaction)
       sock.off('bot:pause:state', this.onBotPauseState)
     }
     if (this.visibilityListener) {

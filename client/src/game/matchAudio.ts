@@ -71,4 +71,15 @@ export const matchAudio = {
     beep(392, 140, 0.055)
     setTimeout(() => beep(294, 200, 0.05), 100)
   },
+  reactionHeart: (): void => beep(520, 120, 0.04, 'sine', 660),
+  reactionFire: (): void => beep(180, 60, 0.06, 'sawtooth', 320),
+  reactionCry: (): void => {
+    beep(380, 90, 0.045)
+    setTimeout(() => beep(300, 100, 0.04), 80)
+  },
+  reactionHalo: (): void => beep(880, 140, 0.035, 'sine'),
+  reactionAngry: (): void => {
+    beep(140, 70, 0.07, 'square')
+    setTimeout(() => beep(120, 90, 0.06, 'square'), 60)
+  },
 }

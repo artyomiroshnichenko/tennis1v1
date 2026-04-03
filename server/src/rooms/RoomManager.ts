@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type { Server } from 'socket.io'
 import { MatchController } from '../game/MatchController'
 import { persistOnlineMatch } from '../match/persistOnlineMatch'
+import { maskBannedWords } from '../chat/moderate'
 import type {
   ManagedRoom,
   LobbyChatMessage,
@@ -16,10 +17,15 @@ const IDLE_CLOSE_MS = 5 * 60 * 1000
 const MAX_ACTIVE_ROOMS_PER_SUBJECT = 3
 const MAX_ROOM_CREATES_PER_IP_10MIN = 10
 const TEN_MIN_MS = 10 * 60 * 1000
-const CHAT_MAX_LEN = 500
-const CHAT_BURST = 12
-const CHAT_BURST_WINDOW_MS = 10_000
+const CHAT_MAX_LEN = 200
+const CHAT_MAX_PER_WINDOW = 3
+const CHAT_WINDOW_MS = 5000
+const REACTION_COOLDOWN_MS = 5000
 const MAX_SPECTATORS = 2
+
+export type ReactionType = 'heart' | 'fire' | 'cry' | 'halo' | 'angry'
+
+const REACTION_TYPES = new Set<ReactionType>(['heart', 'fire', 'cry', 'halo', 'angry'])
 
 function randomCode(length = 6): string {
   let s = ''
@@ -48,6 +54,7 @@ export class RoomManager {
   private readonly activeRoomsByHostSubject = new Map<string, number>()
   private readonly roomCreateTimestampsByIp: Map<string, number[]> = new Map()
   private readonly chatTimestampsBySocket: Map<string, number[]> = new Map()
+  private readonly reactionLastBySocket: Map<string, number> = new Map()
 
   constructor(io: Server) {
     this.io = io
@@ -206,6 +213,7 @@ export class RoomManager {
     const r = this.roomsById.get(room.id)
     if (!r || r.phase !== 'countdown') return
     r.phase = 'playing'
+    r.matchChat = []
     const host = r.players.find((p) => p.isHost)
     const guest = r.players.find((p) => !p.isHost)
     if (!host || !guest) return
@@ -254,6 +262,7 @@ export class RoomManager {
       rematchReady: new Set(),
       phase: 'waiting',
       lobbyChat: [],
+      matchChat: [],
       createdAt: Date.now(),
     }
     this.roomsById.set(id, room)
@@ -344,6 +353,7 @@ export class RoomManager {
     this.io.to(socketId).emit('spectator:joined', {
       players: this.buildPlayersPayload(room),
       phase: room.phase,
+      matchChat: [...room.matchChat],
     })
     this.io.to(`room:${room.id}`).emit('spectator:count', { count: room.spectators.length })
 
@@ -456,27 +466,71 @@ export class RoomManager {
       return { error: 'VALIDATION_ERROR', message: 'Пустое сообщение' }
     }
     if (text.length > CHAT_MAX_LEN) {
-      return { error: 'VALIDATION_ERROR', message: 'Сообщение слишком длинное' }
+      return { error: 'VALIDATION_ERROR', message: `Не больше ${CHAT_MAX_LEN} символов` }
     }
 
     const now = Date.now()
     const arr = this.chatTimestampsBySocket.get(socketId) ?? []
-    const fresh = arr.filter((t) => now - t < CHAT_BURST_WINDOW_MS)
+    const fresh = arr.filter((t) => now - t < CHAT_WINDOW_MS)
     fresh.push(now)
     this.chatTimestampsBySocket.set(socketId, fresh)
-    if (fresh.length > CHAT_BURST) {
-      return { error: 'RATE_LIMITED', message: 'Слишком частые сообщения' }
+    if (fresh.length > CHAT_MAX_PER_WINDOW) {
+      return {
+        error: 'RATE_LIMITED',
+        message: 'Не больше трёх сообщений за 5 секунд. Подождите немного.',
+      }
     }
 
     const player = room.players.find((p) => p.socketId === socketId)
     const spectator = room.spectators.find((s) => s.socketId === socketId)
     const from = player?.nickname ?? spectator?.nickname ?? '?'
-    const msg: LobbyChatMessage = { from, text, timestamp: now }
+    const masked = maskBannedWords(text)
+    const msg: LobbyChatMessage = { from, text: masked, timestamp: now }
     if (room.phase === 'waiting' || room.phase === 'countdown') {
       room.lobbyChat.push(msg)
+    } else if (room.phase === 'playing' || room.phase === 'result') {
+      room.matchChat.push(msg)
     }
     this.io.to(`room:${room.id}`).emit('chat:message', msg)
     return msg
+  }
+
+  appendReaction(
+    socketId: string,
+    typeRaw: string | undefined,
+  ):
+    | { from: string; type: ReactionType; timestamp: number; anchor: 'left' | 'right' | 'spectator' }
+    | { error: string; message: string } {
+    const room = this.getRoomBySocket(socketId)
+    if (!room) {
+      return { error: 'NOT_IN_ROOM', message: 'Вы не в комнате' }
+    }
+    if (typeof typeRaw !== 'string' || !REACTION_TYPES.has(typeRaw as ReactionType)) {
+      return { error: 'VALIDATION_ERROR', message: 'Неизвестная реакция' }
+    }
+    const type = typeRaw as ReactionType
+    const now = Date.now()
+    const last = this.reactionLastBySocket.get(socketId) ?? 0
+    if (now - last < REACTION_COOLDOWN_MS) {
+      return {
+        error: 'RATE_LIMITED',
+        message: 'Реакцию можно отправить раз в 5 секунд.',
+      }
+    }
+    this.reactionLastBySocket.set(socketId, now)
+
+    const player = room.players.find((p) => p.socketId === socketId)
+    const spectator = room.spectators.find((s) => s.socketId === socketId)
+    const from = player?.nickname ?? spectator?.nickname ?? '?'
+    let anchor: 'left' | 'right' | 'spectator'
+    if (player) {
+      anchor = player.isHost ? 'left' : 'right'
+    } else {
+      anchor = 'spectator'
+    }
+    const payload = { from, type, timestamp: now, anchor }
+    this.io.to(`room:${room.id}`).emit('chat:reaction', payload)
+    return payload
   }
 
   attachSocketToRoom(socketId: string, roomId: string): void {

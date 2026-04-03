@@ -3,6 +3,7 @@ import { LS_ACCESS } from '../sessionKeys'
 import { destroyGame, startOnlineMatch } from '../game/startPhaser'
 import type { Side } from '../game/gameTypes'
 import type { Socket } from 'socket.io-client'
+import { mountRoomChat, showRoomToast, type ChatLine } from '../ui/roomChat'
 import '../ui/lobby.css'
 
 function formatSetsDisplay(sets: [number, number][]): string {
@@ -35,8 +36,6 @@ export type LobbyHooks = {
   onLeave: () => void
   nickname: string
 }
-
-type ChatLine = { from: string; text: string; timestamp: number }
 
 let waitTimer: ReturnType<typeof setInterval> | null = null
 
@@ -74,56 +73,6 @@ function updateSpectatorCountBadge(gameEl: HTMLElement, count: number): void {
 
 function removeSpectatorCountBadge(gameEl: HTMLElement): void {
   gameEl.querySelector('#spectator-count-badge')?.remove()
-}
-
-/** Чат комнаты для зрителя (игра / экран результата). */
-function mountSpectatorRoomChat(gameEl: HTMLElement, sock: Socket): () => void {
-  const wrap = document.createElement('div')
-  wrap.className = 'spectator-room-chat'
-  wrap.style.cssText =
-    'position:absolute;left:8px;bottom:8px;right:auto;max-width:min(320px,calc(100% - 16px));z-index:45;display:flex;flex-direction:column;gap:6px;pointer-events:auto'
-  const msgs = document.createElement('div')
-  msgs.style.cssText =
-    'max-height:min(120px,22vh);overflow-y:auto;font:12px system-ui;background:rgba(20,20,40,0.88);border-radius:8px;padding:8px;color:#c8c8e0;border:1px solid #3a3a55'
-  const row = document.createElement('div')
-  row.style.cssText = 'display:flex;gap:6px;align-items:center'
-  const inp = document.createElement('input')
-  inp.type = 'text'
-  inp.maxLength = 500
-  inp.placeholder = 'Сообщение в комнату…'
-  inp.autocomplete = 'off'
-  inp.style.cssText =
-    'flex:1;min-width:0;padding:6px 8px;border-radius:6px;border:1px solid #4a4a68;background:#1a1a2e;color:#e8e8f0;font:13px system-ui'
-  const btn = document.createElement('button')
-  btn.type = 'button'
-  btn.className = 'btn-primary'
-  btn.textContent = 'Отпр.'
-  btn.style.cssText = 'padding:6px 10px;font:13px system-ui;flex-shrink:0'
-  const send = (): void => {
-    const t = inp.value.trim()
-    if (!t) return
-    sock.emit('chat:message', { text: t })
-    inp.value = ''
-  }
-  btn.addEventListener('click', send)
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') send()
-  })
-  const onChat = (msg: ChatLine): void => {
-    const line = document.createElement('div')
-    line.style.cssText = 'margin-bottom:4px;word-break:break-word'
-    line.textContent = `${msg.from}: ${msg.text}`
-    msgs.appendChild(line)
-    msgs.scrollTop = msgs.scrollHeight
-  }
-  sock.on('chat:message', onChat)
-  row.append(inp, btn)
-  wrap.append(msgs, row)
-  gameEl.appendChild(wrap)
-  return () => {
-    sock.off('chat:message', onChat)
-    wrap.remove()
-  }
 }
 
 function whenConnected(sock: Socket, fn: () => void): void {
@@ -188,11 +137,24 @@ function mountLobbyShell(
     </div>
     <div class="lobby-players" id="lobby-players"></div>
     <p class="lobby-err" id="lobby-err"></p>
-    <div class="lobby-chat">
-      <div class="lobby-chat-msgs" id="lobby-msgs"></div>
-      <div class="lobby-chat-input">
-        <input type="text" id="lobby-input" maxlength="500" placeholder="Сообщение…" autocomplete="off" />
-        <button type="button" class="btn-primary" id="lobby-send">Отправить</button>
+    <div class="lobby-chat" id="lobby-chat-wrap">
+      <div class="lobby-chat-head">
+        <button type="button" class="btn-secondary" id="lobby-chat-toggle">Свернуть чат</button>
+        <span class="lobby-chat-unread" id="lobby-chat-unread" aria-hidden="true"></span>
+      </div>
+      <div class="lobby-chat-body" id="lobby-chat-body">
+        <div class="lobby-chat-msgs" id="lobby-msgs"></div>
+        <div class="lobby-reactions" id="lobby-reactions">
+          <button type="button" data-chat-reaction="heart" title="Сердечко">❤️</button>
+          <button type="button" data-chat-reaction="fire" title="Огонь">🔥</button>
+          <button type="button" data-chat-reaction="cry" title="Плач">😭</button>
+          <button type="button" data-chat-reaction="halo" title="Нимб">😇</button>
+          <button type="button" data-chat-reaction="angry" title="Злость">😡</button>
+        </div>
+        <div class="lobby-chat-input">
+          <input type="text" id="lobby-input" maxlength="200" placeholder="Сообщение…" autocomplete="off" />
+          <button type="button" class="btn-primary" id="lobby-send">Отправить</button>
+        </div>
       </div>
     </div>
   `
@@ -206,6 +168,25 @@ function mountLobbyShell(
   const countdownEl = root.querySelector('#lobby-countdown') as HTMLElement
   const msgsEl = root.querySelector('#lobby-msgs') as HTMLElement
   const inputEl = root.querySelector('#lobby-input') as HTMLInputElement
+  const chatBody = root.querySelector('#lobby-chat-body') as HTMLElement
+  const chatToggle = root.querySelector('#lobby-chat-toggle') as HTMLButtonElement
+  const chatUnread = root.querySelector('#lobby-chat-unread') as HTMLElement
+
+  let lobbyChatCollapsed = false
+
+  const applyLobbyChatCollapsed = (): void => {
+    chatBody.style.display = lobbyChatCollapsed ? 'none' : 'flex'
+    chatToggle.textContent = lobbyChatCollapsed ? 'Чат' : 'Свернуть чат'
+    if (!lobbyChatCollapsed) {
+      chatUnread.style.display = 'none'
+      msgsEl.scrollTop = msgsEl.scrollHeight
+    }
+  }
+
+  chatToggle.addEventListener('click', () => {
+    lobbyChatCollapsed = !lobbyChatCollapsed
+    applyLobbyChatCollapsed()
+  })
 
   if (!opts.showInvite) {
     inviteWrap.style.display = 'none'
@@ -255,6 +236,9 @@ function mountLobbyShell(
     div.append(who, body, time)
     msgsEl.appendChild(div)
     msgsEl.scrollTop = msgsEl.scrollHeight
+    if (lobbyChatCollapsed) {
+      chatUnread.style.display = 'inline-block'
+    }
   }
 
   function renderMsgs(list: ChatLine[]): void {
@@ -324,8 +308,11 @@ function wireLobbySocket(
   let chatLines: ChatLine[] = []
   let mySide: Side = 'left'
   let rematchHintEl: HTMLParagraphElement | null = null
+  let removeGameChat: (() => void) | null = null
 
   const goToMenuFromGame = (gameEl: HTMLElement): void => {
+    removeGameChat?.()
+    removeGameChat = null
     removeSpectatorCountBadge(gameEl)
     sock.emit('room:leave')
     disconnectGameSocket()
@@ -337,7 +324,16 @@ function wireLobbySocket(
 
   sock.on('error', (payload: { code?: string; message?: string }) => {
     const msg = payload?.message ?? 'Ошибка'
-    ui.setErr(msg)
+    const lobbyEl = document.getElementById('lobby')
+    const gameEl = document.getElementById(gameRootId)
+    const inLobby = lobbyEl && lobbyEl.style.display !== 'none'
+    if (inLobby) {
+      ui.setErr(msg)
+    } else if (gameEl && gameEl.style.display !== 'none') {
+      showRoomToast(gameEl, msg)
+    } else {
+      ui.setErr(msg)
+    }
     if (payload?.code === 'ROOM_FULL' || payload?.code === 'ROOM_NOT_FOUND') {
       setTimeout(() => userLeave(), 2200)
     }
@@ -412,6 +408,8 @@ function wireLobbySocket(
 
   sock.on('game:start', () => {
     clearWaitTimer()
+    removeGameChat?.()
+    removeGameChat = null
     lobbyRoot.style.display = 'none'
     lobbyRoot.innerHTML = ''
     const gameEl = document.getElementById(gameRootId)
@@ -493,6 +491,7 @@ function wireLobbySocket(
         gameEl.appendChild(overlay)
         setGameBackVisible(false)
       })
+      removeGameChat = mountRoomChat(gameEl, sock, { initialLines: [] })
     }
     let backBtn = document.getElementById('game-back') as HTMLButtonElement | null
     if (!backBtn) {
@@ -520,6 +519,13 @@ function wireLobbySocket(
   lobbyRoot.querySelector('#lobby-send')?.addEventListener('click', sendChat)
   lobbyRoot.querySelector('#lobby-input')?.addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Enter') sendChat()
+  })
+
+  lobbyRoot.querySelectorAll('[data-chat-reaction]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const t = (el as HTMLElement).getAttribute('data-chat-reaction')
+      if (t) sock.emit('chat:reaction', { type: t })
+    })
   })
 }
 
@@ -634,6 +640,7 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
 
   let joinRetryTimer: ReturnType<typeof setInterval> | null = null
   let removeRoomChat: (() => void) | null = null
+  let pendingSpectatorMatchChat: ChatLine[] = []
 
   const clearJoinRetry = (): void => {
     if (joinRetryTimer) {
@@ -771,6 +778,8 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
 
     removeRoomChat?.()
     removeRoomChat = null
+    const initial = pendingSpectatorMatchChat
+    pendingSpectatorMatchChat = []
     startOnlineMatch(
       'game',
       'left',
@@ -781,11 +790,18 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
       },
       { spectator: true },
     )
-    removeRoomChat = mountSpectatorRoomChat(gameRoot, sock)
+    removeRoomChat = mountRoomChat(gameRoot, sock, { initialLines: initial })
   })
 
-  sock.on('spectator:joined', (p: { players: Array<{ nickname: string; side: string }>; phase: string }) => {
+  sock.on(
+    'spectator:joined',
+    (p: {
+      players: Array<{ nickname: string; side: string }>
+      phase: string
+      matchChat?: ChatLine[]
+    }) => {
     clearJoinRetry()
+    pendingSpectatorMatchChat = [...(p.matchChat ?? [])]
     if (p.phase === 'playing') {
       gameRoot.querySelector('.spectator-wait-panel')?.remove()
       return
@@ -800,7 +816,7 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
       panel.textContent = 'Матч завершён. Ожидание реванша или нового старта…'
       gameRoot.appendChild(panel)
       removeRoomChat?.()
-      removeRoomChat = mountSpectatorRoomChat(gameRoot, sock)
+      removeRoomChat = mountRoomChat(gameRoot, sock, { initialLines: pendingSpectatorMatchChat })
       const backBtn = ensureBackBtn()
       backBtn.onclick = () => {
         sock.emit('room:leave')
@@ -833,7 +849,11 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
       }
       return
     }
-    alert(payload?.message ?? 'Ошибка')
+    if (gameRoot.style.display !== 'none') {
+      showRoomToast(gameRoot, payload?.message ?? 'Ошибка')
+    } else {
+      alert(payload?.message ?? 'Ошибка')
+    }
     tearDown()
   })
 

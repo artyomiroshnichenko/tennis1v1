@@ -123,9 +123,9 @@ socket.emit('error', { code: string, message: string })
 | `game:resume` | `{}` (или пустое тело) | Матч продолжается; после паузы `peer` — перед `game:over`; в бот-матче при возврате на вкладку до истечения 15 с |
 | `game:over` | `{ winner, sets, reason, technical? }` | Матч завершён; `technical` — отключение соперника |
 | `room:rematch:state` | `{ youReady, peerReady }` | Согласие на реванш (только игрокам) |
-| `spectator:joined` | `{ players, phase }` | Наблюдатель в комнате; `phase`: `playing` \| `result` |
-| `chat:message` | `{ from, text, timestamp }` | Новое сообщение в чате |
-| `chat:reaction` | `{ from, type }` | Реакция от участника |
+| `spectator:joined` | `{ players, phase, matchChat }` | Наблюдатель в комнате; `phase`: `playing` \| `result`; `matchChat` — сообщения с начала текущего матча (и экрана результата) |
+| `chat:message` | `{ from, text, timestamp }` | Новое сообщение в чате (текст уже с маскировкой запрещённых слов на сервере) |
+| `chat:reaction` | `{ from, type, timestamp, anchor }` | Реакция; `type`: `heart` \| `fire` \| `cry` \| `halo` \| `angry`; `anchor`: `left` \| `right` (игрок) \| `spectator` |
 | `spectator:count` | `{ count }` | Обновление числа наблюдателей |
 
 ---
