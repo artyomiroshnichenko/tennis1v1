@@ -81,3 +81,26 @@ export function startOnlineMatch(
     onMatchEnd,
   })
 }
+
+export function startBotMatch(
+  rootId: string,
+  socket: Socket,
+  nickname: string,
+  opts: {
+    opponentName: string
+    onMatchEnd: MatchSceneOpts['onMatchEnd']
+  },
+): void {
+  destroyGame()
+  const el = document.getElementById(rootId)
+  if (!el) return
+  el.innerHTML = ''
+  current = createMatchGame(rootId, {
+    socket,
+    mySide: 'left',
+    nickname,
+    isBot: true,
+    opponentName: opts.opponentName,
+    onMatchEnd: opts.onMatchEnd,
+  })
+}

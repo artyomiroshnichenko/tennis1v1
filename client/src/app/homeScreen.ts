@@ -12,7 +12,9 @@ import { apiJson, apiJsonWithRefresh, refreshSession } from '../api/http'
 import { getFirebaseAuth, firebaseConfigured } from '../firebaseApp'
 import { validateNicknameInput } from '../nicknameRules'
 import { LS_ACCESS, LS_NICKNAME, LS_REFRESH } from '../sessionKeys'
-import { destroyGame, startPhaserPlaceholder } from '../game/startPhaser'
+import type { Side } from '../game/gameTypes'
+import { destroyGame, startBotMatch } from '../game/startPhaser'
+import { getGameSocket, disconnectGameSocket } from '../net/gameSocket'
 import { openLobbyCreate, openLobbyJoin, openSpectatorJoin } from './lobbyScreen'
 import '../ui/home.css'
 
@@ -232,6 +234,10 @@ function outcomeLabel(o: HistoryItem['outcome']): string {
   }
 }
 
+function formatHistoryOpponent(it: Pick<HistoryItem, 'type' | 'opponent'>): string {
+  return it.type === 'BOT' ? `Бот: ${it.opponent}` : it.opponent
+}
+
 function formatHistorySets(sets: unknown): string {
   if (!Array.isArray(sets)) return ''
   return sets
@@ -285,7 +291,7 @@ async function showMatchHistoryPage(): Promise<void> {
       const when = new Date(it.finishedAt ?? it.createdAt).toLocaleString('ru-RU')
       const setsStr = formatHistorySets(it.sets)
       const strong = document.createElement('strong')
-      strong.textContent = it.opponent
+      strong.textContent = formatHistoryOpponent(it)
       const meta = document.createElement('div')
       meta.style.color = '#a8a8b8'
       meta.style.marginTop = '4px'
@@ -339,7 +345,7 @@ function openProfileModal(): void {
         const li = document.createElement('li')
         const date = new Date(it.finishedAt ?? it.createdAt).toLocaleString('ru-RU')
         const setsStr = formatHistorySets(it.sets)
-        li.textContent = `${it.opponent} · ${setsStr || '—'} · ${outcomeLabel(it.outcome)} · ${date}`
+        li.textContent = `${formatHistoryOpponent(it)} · ${setsStr || '—'} · ${outcomeLabel(it.outcome)} · ${date}`
         ul.appendChild(li)
       }
       histEl.innerHTML = '<h3>История матчей</h3>'
@@ -600,13 +606,87 @@ function showHomeView(): void {
   if (backBtn) backBtn.style.display = 'none'
 }
 
-function showGameView(mode: 'create' | 'bot', nickname: string): void {
-  appRoot.style.display = 'none'
-  if (!gameRoot) gameRoot = document.getElementById('game')
-  if (gameRoot) {
-    gameRoot.style.display = 'block'
-    startPhaserPlaceholder('game', nickname, mode)
+type BotDifficulty = 'easy' | 'medium' | 'hard'
+
+function formatSetsLine(sets: [number, number][]): string {
+  if (!sets.length) return ''
+  return sets.map(([a, b]) => `${a}–${b}`).join(', ')
+}
+
+function whenSockReady(sock: { connected: boolean; once: (ev: string, fn: () => void) => void }, fn: () => void): void {
+  if (sock.connected) fn()
+  else sock.once('connect', fn)
+}
+
+function openBotDifficultyModal(nickname: string, pick: (d: BotDifficulty) => void): void {
+  closeModals()
+  const backdrop = document.createElement('div')
+  backdrop.className = 'modal-backdrop'
+  const inner = document.createElement('div')
+  inner.className = 'modal'
+  inner.setAttribute('role', 'dialog')
+  inner.style.maxWidth = '32rem'
+  inner.innerHTML = `<h2>Игра с ботом</h2><p style="color:#a8a8b8;margin-bottom:1rem">${nickname}</p><p style="margin-bottom:0.75rem">Выберите уровень</p>`
+  const cardsWrap = document.createElement('div')
+  cardsWrap.style.display = 'flex'
+  cardsWrap.style.flexDirection = 'column'
+  cardsWrap.style.gap = '12px'
+  const levels: Array<{ d: BotDifficulty; title: string; sub: string; desc: string }> = [
+    {
+      d: 'easy',
+      title: 'Лёгкий',
+      sub: 'Пикми тиннисистка',
+      desc: 'Ниже точность и сила ударов, медленнее реакция',
+    },
+    {
+      d: 'medium',
+      title: 'Средний',
+      sub: 'Профессионал',
+      desc: 'Случайное имя: Медведев, Бублик, Рублев, Соболенко',
+    },
+    {
+      d: 'hard',
+      title: 'Сложный',
+      sub: 'Легенда',
+      desc: 'Случайное имя из топа тура',
+    },
+  ]
+  for (const L of levels) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'btn-secondary'
+    b.style.textAlign = 'left'
+    b.style.padding = '14px'
+    b.innerHTML = `<strong>${L.title}</strong> — ${L.sub}<br><span style="color:#a8a8b8;font-size:14px">${L.desc}</span>`
+    b.addEventListener('click', () => {
+      backdrop.remove()
+      pick(L.d)
+    })
+    cardsWrap.appendChild(b)
   }
+  const cancel = document.createElement('button')
+  cancel.type = 'button'
+  cancel.className = 'btn-secondary'
+  cancel.style.marginTop = '12px'
+  cancel.textContent = 'Отмена'
+  cancel.addEventListener('click', () => backdrop.remove())
+  inner.append(cardsWrap, cancel)
+  backdrop.appendChild(inner)
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) backdrop.remove()
+  })
+  document.body.appendChild(backdrop)
+}
+
+function leaveBotToMenu(sock: { emit: (ev: string, ...args: unknown[]) => void }): void {
+  sock.emit('room:leave')
+  disconnectGameSocket()
+  if (backBtn) backBtn.style.display = 'none'
+  showHomeView()
+  render()
+}
+
+function ensureGameBackForBot(sock: { emit: (ev: string, ...args: unknown[]) => void }): void {
   if (!backBtn) {
     backBtn = document.createElement('button')
     backBtn.id = 'game-back'
@@ -614,12 +694,103 @@ function showGameView(mode: 'create' | 'bot', nickname: string): void {
     backBtn.className = 'btn-secondary'
     backBtn.textContent = 'На главную'
     document.body.appendChild(backBtn)
-    backBtn.addEventListener('click', () => {
-      showHomeView()
-      render()
-    })
   }
   backBtn.style.display = 'block'
+  backBtn.onclick = () => leaveBotToMenu(sock)
+}
+
+async function runBotMatch(nickname: string, difficulty: BotDifficulty): Promise<void> {
+  const token = localStorage.getItem(LS_ACCESS)
+  if (!token) {
+    alert('Нет сессии')
+    return
+  }
+  disconnectGameSocket()
+  const sock = getGameSocket(token)
+  const ref = { botName: '', difficulty }
+  const onBs = (p: { botName: string }): void => {
+    ref.botName = p.botName
+  }
+  const onGs = (): void => {
+    destroyGame()
+    if (!gameRoot) gameRoot = document.getElementById('game')
+    if (gameRoot) {
+      gameRoot.style.display = 'block'
+      gameRoot.style.position = 'relative'
+      gameRoot.querySelector('.match-result-full')?.remove()
+    }
+    appRoot.style.display = 'none'
+    ensureGameBackForBot(sock)
+
+    const renderEnd = (end: {
+      winner: Side
+      reason: string
+      sets: [number, number][]
+      technical?: boolean
+    }): void => {
+      if (!gameRoot) return
+      gameRoot.querySelector('.match-result-full')?.remove()
+      const overlay = document.createElement('div')
+      overlay.className = 'match-result-full'
+      const youWin = end.winner === 'left'
+      const winBg = 'linear-gradient(180deg, rgba(22,48,32,0.97) 0%, rgba(14,28,20,0.98) 100%)'
+      const loseBg = 'linear-gradient(180deg, rgba(48,22,26,0.97) 0%, rgba(28,14,18,0.98) 100%)'
+      overlay.style.cssText = `position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:${youWin ? winBg : loseBg};color:#e8e8f0;font:18px system-ui,sans-serif;text-align:center;z-index:30;padding:20px`
+      const title = document.createElement('div')
+      title.style.cssText = `font-size:28px;font-weight:600;color:${youWin ? '#7dffb3' : '#ff8a8a'}`
+      title.textContent = youWin ? 'Победа' : 'Поражение'
+      const setsEl = document.createElement('div')
+      setsEl.textContent = formatSetsLine(end.sets)
+      const sub = document.createElement('div')
+      sub.style.color = '#a8a8b8'
+      sub.style.fontSize = '15px'
+      sub.textContent =
+        end.technical && !youWin
+          ? 'Техническое поражение (неактивная вкладка или выход)'
+          : end.reason
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:center'
+      const rematch = document.createElement('button')
+      rematch.type = 'button'
+      rematch.className = 'btn-primary'
+      rematch.textContent = 'Сыграть ещё раз'
+      rematch.addEventListener('click', () => {
+        overlay.remove()
+        sock.emit('bot:start', { difficulty: ref.difficulty, nickname })
+      })
+      const menu = document.createElement('button')
+      menu.type = 'button'
+      menu.className = 'btn-secondary'
+      menu.textContent = 'В главное меню'
+      menu.addEventListener('click', () => {
+        overlay.remove()
+        leaveBotToMenu(sock)
+      })
+      row.append(rematch, menu)
+      overlay.append(title, setsEl, sub, row)
+      gameRoot.appendChild(overlay)
+    }
+
+    startBotMatch('game', sock, nickname, {
+      opponentName: ref.botName,
+      onMatchEnd: renderEnd,
+    })
+  }
+
+  sock.off('bot:started', onBs)
+  sock.off('game:start', onGs)
+  sock.on('bot:started', onBs)
+  sock.on('game:start', onGs)
+
+  const onErr = (payload: { message?: string }): void => {
+    alert(payload?.message ?? 'Ошибка')
+    leaveBotToMenu(sock)
+  }
+  sock.on('error', onErr)
+
+  whenSockReady(sock, () => {
+    sock.emit('bot:start', { difficulty: ref.difficulty, nickname })
+  })
 }
 
 function render(): void {
@@ -736,7 +907,9 @@ async function tryStart(mode: 'create' | 'bot'): Promise<void> {
   try {
     const nickname = await ensureReadyToPlay()
     if (mode === 'bot') {
-      showGameView(mode, nickname)
+      openBotDifficultyModal(nickname, (d) => {
+        void runBotMatch(nickname, d)
+      })
       return
     }
     await openLobbyCreate({

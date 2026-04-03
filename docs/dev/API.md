@@ -90,6 +90,8 @@ socket.emit('error', { code: string, message: string })
 |---|---|---|
 | `room:create` | `{ nickname }` | Создать онлайн-комнату |
 | `bot:start` | `{ nickname, difficulty: 'easy' \| 'medium' \| 'hard' }` | Начать матч с ботом — создаёт изолированную игровую сессию, без комнаты и кода |
+| `bot:visibility` | `{ hidden: boolean }` | Бот-матч: вкладка скрыта или снова видна — при `hidden: true` сервер шлёт `game:pause` на 15 с; при `false` — `game:resume` |
+| `bot:toggle_pause` | — | Бот-матч: переключить ручную паузу (на клиенте по умолчанию клавиша P); ответ — `bot:pause:state` |
 | `room:join` | `{ code, nickname }` | Войти в комнату по коду |
 | `room:leave` | — | Покинуть комнату |
 | `room:rematch` | — | Запрос на реванш |
@@ -105,6 +107,7 @@ socket.emit('error', { code: string, message: string })
 |---|---|---|
 | `room:created` | `{ code, roomId }` | Онлайн-комната создана, код для приглашения |
 | `bot:started` | `{ initialState, botName }` | Бот-матч начался — возвращает имя бота и начальное состояние |
+| `bot:pause:state` | `{ paused: boolean }` | Бот-матч: подтверждение ручной паузы после `bot:toggle_pause` |
 | `room:joined` | `{ side: 'left' \| 'right', players, lobbyChat? }` | Подтверждение входа; `players` — `{ nickname, side }[]`; `lobbyChat` — история чата лобби для синхронизации |
 | `room:full` | — | Комната заполнена |
 | `room:countdown` | `{ seconds }` | Отсчёт перед стартом (15 сек) |
@@ -117,7 +120,7 @@ socket.emit('error', { code: string, message: string })
 | `game:event` | `{ type: 'ace' \| 'net' \| 'out' \| 'let' \| 'fault' }` | Игровое событие |
 | `game:sides:change` | — | Смена сторон |
 | `game:pause` | `{ reason: 'disconnect', seconds }` | Пауза с обратным отсчётом |
-| `game:resume` | — | Матч продолжается |
+| `game:resume` | `{}` (или пустое тело) | Матч продолжается; в бот-матче приходит при возврате на вкладку до истечения 15 с |
 | `game:over` | `{ winner, sets, reason, technical? }` | Матч завершён; `technical` — отключение соперника |
 | `room:rematch:state` | `{ youReady, peerReady }` | Согласие на реванш (только игрокам) |
 | `spectator:joined` | `{ players, phase }` | Наблюдатель в комнате; `phase`: `playing` \| `result` |
@@ -165,8 +168,9 @@ type PlayerState = 'idle' | 'running' | 'hitting' | 'serving'
 - [ ] Firebase токен верифицируется на /auth/firebase
 - [ ] Гостевая сессия выдаётся на /auth/guest
 - [ ] Эндпоинт /profile/nickname/check возвращает { available: boolean } до сохранения
-- [ ] Бот-матч стартует через `bot:start` — отдельная изолированная сессия без кода комнаты
-- [ ] `bot:started` возвращает имя бота (случайное по уровню сложности) и начальное состояние игры
+- [x] Бот-матч стартует через `bot:start` — отдельная изолированная сессия без кода комнаты
+- [x] `bot:started` возвращает имя бота (случайное по уровню сложности) и начальное состояние игры
+- [x] Бот-матч: `bot:visibility`, `bot:toggle_pause`, `bot:pause:state` согласованы с клиентом
 - [ ] Удар реализован двухфазно: сначала `game:indicator:show { phase: 'direction' }`, затем `game:indicator:show { phase: 'power' }` — клиент отвечает `game:input:indicator` на каждую фазу
 - [ ] Все Socket.io события реализованы согласно спецификации
 - [ ] Ошибки WebSocket отправляются через событие `error` в формате `{ code, message }`

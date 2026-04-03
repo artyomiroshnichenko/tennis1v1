@@ -157,6 +157,16 @@ export class MatchEngine {
     return 'playing'
   }
 
+  /** Сторона и фаза индикатора, если движок ждёт ввод подачи/удара. */
+  getIndicatorNeed(): { side: Side; phase: 'direction' | 'power' } | null {
+    const ph = this.phase
+    if (ph.k === 'serve_power') return { side: ph.server, phase: 'power' }
+    if (ph.k === 'serve_aim') return { side: ph.server, phase: 'direction' }
+    if (ph.k === 'hit_dir') return { side: ph.for, phase: 'direction' }
+    if (ph.k === 'hit_pwr') return { side: ph.for, phase: 'power' }
+    return null
+  }
+
   getWireState(): GameStateWire {
     return {
       ball: this.toWireBall(),
@@ -539,6 +549,11 @@ export class MatchEngine {
   forfeitWinner(winner: Side): PendingEmit[] {
     this.phase = { k: 'done', winner }
     return [{ over: { winner, reason: 'Соперник вышел' } }]
+  }
+
+  forfeitWithReason(winner: Side, reason: string): PendingEmit[] {
+    this.phase = { k: 'done', winner }
+    return [{ over: { winner, reason } }]
   }
 }
 

@@ -14,6 +14,9 @@ export type MatchSceneOpts = {
   nickname: string
   /** Наблюдатель: без ввода, нейтральные подписи */
   spectator?: boolean
+  /** Матч с ботом: пауза P, вкладка, без индикаторов на стороне бота (сервер не шлёт) */
+  isBot?: boolean
+  opponentName?: string
   onMatchEnd: (payload: {
     winner: Side
     reason: string
@@ -81,6 +84,10 @@ export class MatchScene extends Phaser.Scene {
   private prevBallVy: number | null = null
   private bounceCd = 0
   private sidesFlipTween: Phaser.Tweens.Tween | null = null
+  private pauseKey?: Phaser.Input.Keyboard.Key
+  private pauseOverlayEl: HTMLDivElement | null = null
+  private pauseCountdownTimer: ReturnType<typeof setInterval> | null = null
+  private visibilityListener?: () => void
 
   private readonly onState = (s: GameStateWire): void => {
     this.lastState = s
@@ -155,6 +162,62 @@ export class MatchScene extends Phaser.Scene {
     })
   }
 
+  private readonly onGamePause = (p: { reason?: string; seconds?: number }): void => {
+    if (p.reason === 'disconnect' && p.seconds !== undefined) {
+      this.showPauseOverlay('Вкладка неактивна — вернитесь, иначе засчитается поражение.', p.seconds)
+    }
+  }
+
+  private readonly onGameResume = (): void => {
+    this.hidePauseOverlay()
+  }
+
+  private readonly onBotPauseState = (p: { paused: boolean }): void => {
+    if (p.paused) {
+      this.showPauseOverlay('Пауза. Нажмите P, чтобы продолжить.')
+    } else {
+      this.hidePauseOverlay()
+    }
+  }
+
+  private showPauseOverlay(mainMsg: string, countdownFrom?: number): void {
+    const parent = this.game.canvas?.parentElement
+    if (!parent) return
+    this.hidePauseOverlay()
+    const el = document.createElement('div')
+    el.className = 'match-pause-overlay'
+    el.style.cssText =
+      'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(10,10,22,0.9);z-index:40;color:#e8e8f0;font:15px system-ui,sans-serif;text-align:center;padding:20px;white-space:pre-line'
+    const t = document.createElement('div')
+    el.appendChild(t)
+    parent.appendChild(el)
+    this.pauseOverlayEl = el
+    if (countdownFrom !== undefined && countdownFrom > 0) {
+      let left = countdownFrom
+      const tick = (): void => {
+        t.textContent = `${mainMsg}\nОсталось: ${left} с`
+        left -= 1
+        if (left < 0 && this.pauseCountdownTimer) {
+          clearInterval(this.pauseCountdownTimer)
+          this.pauseCountdownTimer = null
+        }
+      }
+      tick()
+      this.pauseCountdownTimer = setInterval(tick, 1000)
+    } else {
+      t.textContent = mainMsg
+    }
+  }
+
+  private hidePauseOverlay(): void {
+    if (this.pauseCountdownTimer) {
+      clearInterval(this.pauseCountdownTimer)
+      this.pauseCountdownTimer = null
+    }
+    this.pauseOverlayEl?.remove()
+    this.pauseOverlayEl = null
+  }
+
   constructor() {
     super('match')
   }
@@ -222,6 +285,18 @@ export class MatchScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(10)
 
+    if (this.opts.opponentName) {
+      this.add
+        .text(width / 2, 58, `vs ${this.opts.opponentName}`, {
+          fontSize: '13px',
+          color: '#9c9cb8',
+          fontFamily: 'system-ui',
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(10)
+    }
+
     const kbd = this.input.keyboard
     if (kbd && !this.opts.spectator) {
       this.keys = {
@@ -235,6 +310,9 @@ export class MatchScene extends Phaser.Scene {
         right: kbd.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
         space: kbd.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
       }
+      if (this.opts.isBot) {
+        this.pauseKey = kbd.addKey(Phaser.Input.Keyboard.KeyCodes.P)
+      }
     }
 
     const sock = this.opts.socket
@@ -244,6 +322,16 @@ export class MatchScene extends Phaser.Scene {
     sock.on('game:event', this.onEvent)
     sock.on('game:sides:change', this.onSides)
     sock.on('game:over', this.onOver)
+
+    if (this.opts.isBot) {
+      this.visibilityListener = () => {
+        sock.emit('bot:visibility', { hidden: document.visibilityState === 'hidden' })
+      }
+      document.addEventListener('visibilitychange', this.visibilityListener)
+      sock.on('game:pause', this.onGamePause)
+      sock.on('game:resume', this.onGameResume)
+      sock.on('bot:pause:state', this.onBotPauseState)
+    }
 
     if (!this.opts.spectator) {
       this.input.on('pointerdown', this.onPointerDown, this)
@@ -464,6 +552,10 @@ export class MatchScene extends Phaser.Scene {
       this.commitIndicator()
     }
 
+    if (this.opts.isBot && this.pauseKey && Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
+      this.opts.socket.emit('bot:toggle_pause')
+    }
+
     let dx = 0
     let dy = 0
     if (!this.opts.spectator && this.keys) {
@@ -566,7 +658,15 @@ export class MatchScene extends Phaser.Scene {
       sock.off('game:event', this.onEvent)
       sock.off('game:sides:change', this.onSides)
       sock.off('game:over', this.onOver)
+      sock.off('game:pause', this.onGamePause)
+      sock.off('game:resume', this.onGameResume)
+      sock.off('bot:pause:state', this.onBotPauseState)
     }
+    if (this.visibilityListener) {
+      document.removeEventListener('visibilitychange', this.visibilityListener)
+      this.visibilityListener = undefined
+    }
+    this.hidePauseOverlay()
     if (!this.opts.spectator) {
       this.input.off('pointerdown', this.onPointerDown, this)
     }
