@@ -1,6 +1,6 @@
-# Handoff для следующего агента (после эпиков 01–02)
+# Handoff для следующего агента (после эпиков 01–03)
 
-Технический контекст и задачи для продолжения с эпика 03. Источник правды по продукту — `docs/business/PRD.md` и `epic-NN-*.md`; по протоколу и стеку — `docs/dev/API.md`, `ARCHITECTURE.md`, `GDD.md`, `DEVGUIDE.md`.
+Технический контекст для продолжения с **эпика 04** (и далее по PRD). Источник правды по продукту — `docs/business/PRD.md` и `epic-NN-*.md`; по протоколу и стеку — `docs/dev/API.md`, `ARCHITECTURE.md`, `GDD.md`, `DEVGUIDE.md`.
 
 ---
 
@@ -9,53 +9,76 @@
 ### Эпик 01 — доступ и идентификация (закрыт)
 
 - REST `/api/v1`: `auth/guest`, `auth/firebase`, `auth/refresh`, `auth/logout`; `profile/me`, `profile/nickname/check`, `profile/nickname`; `matches/history` (только зарегистрированный).
-- Prisma: `User`, `Match`, `MatchPlayer`, `RefreshToken` (+ `payload` для гостя при refresh). Миграция `20250404180000_init`.
-- Клиент: главная, гость (localStorage + JWT), Firebase email/телефон, профиль и история (в модалке), два действия «Создать игру» / «Играть с ботом».
-- Клиент `tsconfig`: `noEmit: true` (только Vite собирает бандл).
+- Prisma: `User`, `Match`, `MatchPlayer`, `RefreshToken`. Миграция `20250404180000_init`.
+- Клиент: главная, гость, Firebase, профиль и история в модалке (история наполнится после записи матчей из игры — **эпик 04**).
 
 ### Эпик 02 — лобби (закрыт)
 
-- Socket.io: JWT в `handshake.auth.token` (или `query.token`). Обработчики в `server/src/socket/lobbySocket.ts`, логика комнат в `server/src/rooms/RoomManager.ts`.
-- События: `room:create`, `room:join`, `room:leave`, `chat:message` (лобби); ответы `room:created`, `room:joined` (в т.ч. `lobbyChat`), `room:countdown`, `room:closed`, `game:start` (заглушка), ошибки через `error` `{ code, message }`.
-- Лимиты (ARCHITECTURE): до 3 активных комнат на субъект (по `creatorSubjectId`), до 10 созданий комнат с IP за 10 мин, закрытие комнаты через 5 мин без второго игрока; чат в лобби с rate limit на сокет.
-- Клиент: `client/src/app/lobbyScreen.ts`, `net/gameSocket.ts`, вход по `?room=КОД`; после отсчёта 15 с — Phaser-заглушка `online` в `game/startPhaser.ts`.
+- Socket.io: JWT в `handshake.auth.token` (или `query.token`). `server/src/socket/lobbySocket.ts`, `server/src/rooms/RoomManager.ts`.
+- События лобби: `room:create`, `room:join`, `room:leave`, `chat:message`; ответы `room:created`, `room:joined` (`lobbyChat`), `room:countdown`, `room:closed`; ошибки `error` `{ code, message }`.
+- Лимиты комнат — см. `ARCHITECTURE.md`.
+- Клиент: `client/src/app/lobbyScreen.ts`, `client/src/net/gameSocket.ts`, `?room=КОД`.
 
-### Коммиты (ориентир)
+### Эпик 03 — игровой процесс (закрыт по чеклисту в `docs/business/epic-03-game.md`)
 
-- Эпик 01: см. историю `main` (крупный коммит auth + клиент).
-- Эпик 02: `711d0d1` (сервер лобби), `004f68b` (клиент лобби + API/epic чеклисты).
+**Сервер (авторитетный матч ~60 Hz):**
+
+- `server/src/game/constants.ts`, `geometry.ts`, `scoring.ts`, `types.ts` — корт, счёт, типы wire.
+- `server/src/game/matchEngine.ts` — фазы подачи/ралли/пауза очка/смена сторон, физика мяча с высотой и сеткой, ввод индикаторов.
+- `server/src/game/MatchController.ts` — тик, эмиты `game:start`, `game:state`, `game:point` (с полем `score`), `game:event`, `game:serve:prompt`, `game:indicator:show`, `game:sides:change`, `game:over`; старт после отсчёта лобби.
+- `server/src/rooms/RoomManager.ts` — после `finishCountdown` создаётся `MatchController`; `handleGameInputMove` / `handleGameInputIndicator`; при `room:leave` во время матча — победа сопернику (`forfeitDisconnected`).
+- `server/src/socket/lobbySocket.ts` — обработчики `game:input:move`, `game:input:indicator`.
+
+**Клиент:**
+
+- `client/src/game/matchScene.ts` — Phaser: корт в `Container` (анимация переворота при смене сторон), мяч/игроки, счёт, ввод WASD/стрелки и тап по корту, оверлей индикаторов, оверлей результата через колбэк в лобби.
+- `client/src/game/matchAudio.ts` — **синтетические** звуки на события (см. бэклог на замену файлами).
+- `client/src/game/startPhaser.ts` — `startOnlineMatch` из лобби после `game:start`.
+- `client/src/game/gameTypes.ts` — типы состояния согласно API.
+
+**Не реализовано в рамках эпика 03 (и не требовалось чеклистом):** запись матча в БД, полноценный экран результата по эпику 04, `game:pause`/`resume` при обрыве (см. эпик 08), бот (`bot:start` — эпик 05), наблюдатели в матче (эпик 06).
+
+### Коммиты (ориентир по `main`)
+
+- Крупный блок эпика 03: `792087a` (движок + клиент матча).
+- Анимация смены сторон + расширенные звуки: `e561c08`.
 
 ---
 
-## Текущее состояние vs целевое (ARCHITECTURE)
+## Текущее состояние vs целевое (ARCHITECTURE / PRD)
 
-| Тема | Сейчас | Цель из ARCHITECTURE / GDD |
-|------|--------|----------------------------|
-| Рендер игры | Phaser 3, сцена-заглушка после лобби/бота | Полноценные сцены, ассеты по `assets.config.ts` (ещё не заведён) |
-| Авторитетность | После `game:start` симуляции нет | Server-authoritative ~60 Hz, клиент только input + рендер |
-| Бот | Кнопка ведёт в локальную заглушку, без `bot:start` | Эпик 05, Socket `bot:start` / `bot:started` |
-| Матч в БД | Схема есть, запись матчей из игры не подключена | Эпик 04 и игровой движок на сервере |
+| Тема | Сейчас | Цель / следующий эпик |
+|------|--------|------------------------|
+| Результат матча | Оверлей «Победа/Поражение» в `#game`, кнопка «На главную» | **Эпик 04**: отдельный экран результата, стили победителя/проигравшего, реванш по согласию |
+| История матчей | API и модалка есть; записи не создаются из онлайн-матча | **Эпик 04**: сохранение `Match` в БД при `game:over`, связь с пользователями |
+| Звуки матча | Синтез Web Audio | **BACKLOG** `ENG-GAME-AUDIO-FILES`: файлы в `public/assets/sounds` |
+| Точность отскока (звук) | Эвристика по `vy` на клиенте | **BACKLOG** `ENG-GAME-BOUNCE-EVENT` (опционально) |
+| Ассеты спрайтов / `assets.config.ts` | Нет | ARCHITECTURE — отдельными задачами/эпиками по визуалу |
+| Бот | Заглушка на главной | **Эпик 05** |
+| Наблюдатели в матче | `spectator:join` отклонён в лобби | **Эпик 06** |
+| Комнаты | In-memory одного процесса | Масштабирование — Redis adapter в ARCHITECTURE |
 
 ---
 
 ## Что намеренно не сделано / отложено
 
-- **Прод HTTPS / домен**: `docs/dev/BACKLOG.md` (ENG-PROD-HTTPS); проверка — преимущественно локально (`DEVGUIDE.md`).
-- **RATE_LIMIT** на REST (кроме логики спама комнат на сокетах) — в API описан, на `/auth` массово не вешали.
+- **Прод HTTPS / домен**: `docs/dev/BACKLOG.md` (ENG-PROD-HTTPS).
+- **RATE_LIMIT** на REST (кроме антиспама комнат на сокетах).
 - **README** может отставать; ориентир — код и `docs/dev/*`.
-- **Легаси**: `server/index.js`, `server/game/room.js` (старый ws) не entrypoint Docker; актуально `server/src/index.ts`.
+- **Легаси**: `server/index.js`, `server/game/room.js` не entrypoint; актуально `server/src/index.ts`.
+- **Замена синтетических звуков и точный отскок** — см. новые пункты в `BACKLOG.md`.
 
 ---
 
-## Следующий логичный шаг: эпик 03 (игровой процесс)
+## Следующий логичный шаг: эпик 04 — экран результата и история
 
-1. Прочитать **`docs/business/epic-03-game.md`** целиком и **`docs/dev/GDD.md`** (релевантные разделы).
-2. Связать с **`docs/dev/API.md`**: `game:input:move`, `game:input:indicator`, серверные `game:state`, `game:start`, `game:point`, `game:serve:prompt`, `game:indicator:show`, `game:event`, `game:sides:change`, `game:pause`/`resume`, `game:over`.
-3. **Сервер**: выделить модуль игрового цикла (тик ~60 Hz в памяти процесса или setInterval с фиксированным dt), привязка к «комнате после лобби» (сейчас комнаты in-memory; после `game:start` нужна жизнь сессии матча и маршрутизация событий по `room:id` или отдельному match id).
-4. **Клиент**: заменить заглушку Phaser на сцену матча; ввод с клавиатуры и позже мобильный ввод по эпику; индикаторы направления/силы в два этапа (как в API и GDD).
-5. **Синхронизация с эпиком 02**: сокеты уже в одной комнате Socket.io после join; не ломать контракт `room:leave` / disconnect до появления явной модели «матч идёт».
+1. Прочитать **`docs/business/epic-04-results.md`** целиком.
+2. Сверить **`docs/dev/API.md`** (REST истории, при необходимости новые поля матча) и **Prisma schema** (`server/prisma/schema.prisma`) — какие поля уже есть у `Match` / `MatchPlayer`, чего не хватает для сценария эпика.
+3. **Сервер**: при завершении онлайн-матча (`MatchController` / `game:over`) создать запись в БД (тип матча, участники по `subjectId` из JWT/комнаты, счёт по сетам, победитель, признак технического поражения при форфите); не ломать гостей (история только у зарегистрированных).
+4. **Сокеты** (если по эпику): `room:rematch` и согласование «сыграть ещё раз» — в API.md сейчас событие упомянуто; реализации может не быть — проверить код.
+5. **Клиент**: экран результата вместо или поверх текущего оверлея; зелёная/красная схема; кнопки реванша и в меню; отдельная страница/раздел истории в профиле, если эпик требует не только модалку.
 
-Зависимости: эпики **04** (результат + история в UI), **05** (бот), **06–09** — по PRD; часть может идти параллельно после появления ядра матча.
+Зависимости: эпики **05–09** — по PRD; **08** пересекается с «отключение соперника» (уже частично как форфит).
 
 ---
 
@@ -70,21 +93,26 @@ cd client && npm install && npm run dev
 ```
 
 - Клиент: `http://localhost:5173` (прокси `/api`, `/socket.io` → `:3000`).
-- БД: Prisma Studio `cd server && npx prisma studio`.
+- БД: `cd server && npx prisma studio`.
 
 ---
 
 ## Правила работы в репозитории
 
-- В Cursor: перед реализацией — контекст → план → чеклист (см. `.cursor/rules/workflow.mdc`).
-- Документы: **`docs/business/`** — только бизнес-язык; **`docs/dev/`** — техника; не смешивать.
-- Коммиты и пуши — логическими порциями; после деплоя на VPS пользователь обновляет код вручную (`git pull`, пересборка контейнеров по `docker-compose.prod.yml`).
+- Перед реализацией — контекст → план → чеклист (`.cursor/rules/workflow.mdc`).
+- **`docs/business/`** — только бизнес-язык; **`docs/dev/`** — техника; не смешивать.
+- Коммиты и пуши — логическими порциями.
 
 ---
 
 ## Чеклист для нового агента в первом сообщении чата
 
-- [ ] Открыть `docs/business/epic-03-game.md` (или следующий выбранный эпик).
-- [ ] Сверить `docs/dev/API.md` и `ARCHITECTURE.md` для server-authoritative и сокетов.
+- [ ] Открыть `docs/business/epic-04-results.md` и чеклист эпика.
+- [ ] Прочитать обновлённый `docs/dev/AGENT_HANDOFF.md` (этот файл).
+- [ ] Сверить `docs/dev/API.md`, Prisma-схему и точки входа: `MatchController`, `RoomManager`, `lobbyScreen.ts`.
+- [ ] Просмотреть `docs/dev/BACKLOG.md` на предмет отложенного звука/отскока и прода — не смешивать с объёмом эпика 04 без явного запроса.
 - [ ] Не опираться на README без сверки с кодом.
-- [ ] Прод-домен и HTTPS — только после `BACKLOG.md`; разработка локально.
+
+Краткая формулировка для старта чата:
+
+> Продолжи Tennis 1v1 с **эпика 04**. Прочитай `docs/dev/AGENT_HANDOFF.md`, затем `docs/business/epic-04-results.md`, `docs/dev/API.md`, Prisma schema. Эпики 01–03 в `main`. История и запись матча из онлайн-игры — основной объём.
