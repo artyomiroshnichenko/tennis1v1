@@ -1,9 +1,12 @@
 import Phaser from 'phaser'
 import type { Socket } from 'socket.io-client'
-import type { GameStateWire, Side } from './gameTypes'
+import type { GameStateWire, Score, Side } from './gameTypes'
+import { matchAudio } from './matchAudio'
 
 const COURT_W = 8.23
 const COURT_L = 23.77
+
+const SIDES_FLIP_MS = 2600
 
 export type MatchSceneOpts = {
   socket: Socket
@@ -14,28 +17,6 @@ export type MatchSceneOpts = {
 
 let matchBootstrap: MatchSceneOpts | null = null
 
-function playTone(freq: number, ms = 70, gain = 0.05): void {
-  try {
-    const AC =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!AC) return
-    const ctx = new AC()
-    const o = ctx.createOscillator()
-    const g = ctx.createGain()
-    o.type = 'sine'
-    o.frequency.value = freq
-    g.gain.value = gain
-    o.connect(g)
-    g.connect(ctx.destination)
-    o.start()
-    o.stop(ctx.currentTime + ms / 1000)
-    ctx.resume?.()
-  } catch {
-    /* без звука */
-  }
-}
-
 function courtPixelY(yM: number, my: Side, ch: number): number {
   const t = my === 'left' ? yM / COURT_L : (COURT_L - yM) / COURT_L
   return t * ch
@@ -45,6 +26,16 @@ function courtPixelX(xM: number, cw: number): number {
   return (xM / COURT_W) * cw
 }
 
+function reasonUsesEventSoundOnly(reason: string): boolean {
+  return (
+    reason.includes('Аут') ||
+    reason.includes('Сетка') ||
+    reason.includes('сетк') ||
+    reason.includes('Двойн') ||
+    reason.includes('ошибк')
+  )
+}
+
 export class MatchScene extends Phaser.Scene {
   private opts!: MatchSceneOpts
   private lastState: GameStateWire | null = null
@@ -52,9 +43,12 @@ export class MatchScene extends Phaser.Scene {
   private ballG!: Phaser.GameObjects.Arc
   private leftG!: Phaser.GameObjects.Arc
   private rightG!: Phaser.GameObjects.Arc
+  private courtLayer!: Phaser.GameObjects.Container
+  private sidesDim!: Phaser.GameObjects.Rectangle
   private scoreText!: Phaser.GameObjects.Text
   private toastText!: Phaser.GameObjects.Text
   private serveText!: Phaser.GameObjects.Text
+  private sidesBanner!: Phaser.GameObjects.Text
   private cw = 1
   private ch = 1
   private ox = 0
@@ -77,14 +71,28 @@ export class MatchScene extends Phaser.Scene {
   private indicatorBar: HTMLDivElement | null = null
   private pointerTarget: { xM: number; yM: number } | null = null
   private moveEmitAcc = 0
+  private prevBallVy: number | null = null
+  private bounceCd = 0
+  private sidesFlipTween: Phaser.Tweens.Tween | null = null
+
   private readonly onState = (s: GameStateWire): void => {
     this.lastState = s
   }
   private readonly onIndicator = (p: { phase: 'direction' | 'power' }): void => {
     this.showIndicator(p.phase)
   }
-  private readonly onPoint = (p: { reason: string }): void => {
-    playTone(520, 55, 0.045)
+  private readonly onPoint = (p: { reason: string; score: Score }): void => {
+    const before = this.lastState?.score
+    if (before && p.score.sets.length > before.sets.length) {
+      matchAudio.setWon()
+    } else if (
+      before &&
+      (p.score.games[0] !== before.games[0] || p.score.games[1] !== before.games[1])
+    ) {
+      matchAudio.gameWon()
+    } else if (!reasonUsesEventSoundOnly(p.reason)) {
+      matchAudio.point()
+    }
     this.flashToast(p.reason)
   }
   private readonly onEvent = (p: { type: string }): void => {
@@ -95,22 +103,34 @@ export class MatchScene extends Phaser.Scene {
       let: 'Лет',
       fault: 'Ошибка',
     }
-    const tones: Record<string, number> = {
-      ace: 880,
-      net: 220,
-      out: 180,
-      let: 660,
-      fault: 300,
+    switch (p.type) {
+      case 'ace':
+        matchAudio.ace()
+        break
+      case 'net':
+        matchAudio.net()
+        break
+      case 'out':
+        matchAudio.out()
+        break
+      case 'let':
+        matchAudio.let()
+        break
+      case 'fault':
+        matchAudio.fault()
+        break
+      default:
+        matchAudio.point()
     }
-    playTone(tones[p.type] ?? 400, 65, 0.04)
     this.flashToast(map[p.type] ?? p.type)
   }
   private readonly onSides = (): void => {
-    playTone(360, 120, 0.05)
-    this.flashToast('Смена сторон', 2200)
+    matchAudio.sidesChange()
+    this.startSidesFlipAnimation()
   }
   private readonly onOver = (p: { winner: Side; reason: string }): void => {
-    playTone(p.winner === this.opts.mySide ? 720 : 240, 160, 0.06)
+    if (p.winner === this.opts.mySide) matchAudio.matchWin()
+    else matchAudio.matchLose()
     this.hideIndicator()
     this.opts.onMatchEnd({ winner: p.winner, reason: p.reason })
   }
@@ -132,13 +152,38 @@ export class MatchScene extends Phaser.Scene {
 
   create(): void {
     const { width, height } = this.scale
+
+    this.courtLayer = this.add.container(0, 0)
     this.graphics = this.add.graphics()
     this.ballG = this.add.circle(0, 0, 8, 0xf5d547, 1)
     this.leftG = this.add.circle(0, 0, 18, 0x4a90d9, 1)
     this.rightG = this.add.circle(0, 0, 18, 0xe85d75, 1)
+    this.courtLayer.add([this.graphics, this.ballG, this.leftG, this.rightG])
+    this.courtLayer.setDepth(2)
+
+    this.sidesDim = this.add
+      .rectangle(width / 2, height / 2, width, height, 0x0a0a14, 0.45)
+      .setScrollFactor(0)
+      .setDepth(4)
+      .setVisible(false)
+
+    this.sidesBanner = this.add
+      .text(width / 2, height / 2, 'Смена сторон', {
+        fontSize: '26px',
+        color: '#f0f0f8',
+        fontFamily: 'system-ui, sans-serif',
+        fontStyle: '600',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(6)
+      .setAlpha(0)
+
     this.scoreText = this.add
       .text(width / 2, 18, '', { fontSize: '16px', color: '#e8e8f0', fontFamily: 'system-ui' })
       .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(10)
     this.toastText = this.add
       .text(width / 2, height / 2 - 120, '', {
         fontSize: '20px',
@@ -148,10 +193,14 @@ export class MatchScene extends Phaser.Scene {
         padding: { x: 12, y: 8 },
       })
       .setOrigin(0.5, 0.5)
+      .setScrollFactor(0)
+      .setDepth(10)
       .setVisible(false)
     this.serveText = this.add
       .text(width / 2, 42, '', { fontSize: '14px', color: '#a8c8ff', fontFamily: 'system-ui' })
       .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(10)
 
     const kbd = this.input.keyboard
     if (kbd) {
@@ -182,8 +231,46 @@ export class MatchScene extends Phaser.Scene {
     this.scale.on('resize', this.onResize, this)
   }
 
+  private startSidesFlipAnimation(): void {
+    this.sidesFlipTween?.stop()
+    this.courtLayer.setRotation(0)
+    const { width, height } = this.scale
+    this.sidesDim.setPosition(width / 2, height / 2)
+    this.sidesDim.setSize(width, height)
+    this.sidesDim.setVisible(true)
+    this.sidesBanner.setPosition(width / 2, height / 2)
+    this.tweens.add({
+      targets: this.sidesBanner,
+      alpha: 1,
+      duration: 280,
+      yoyo: false,
+    })
+    this.sidesFlipTween = this.tweens.add({
+      targets: this.courtLayer,
+      rotation: Math.PI,
+      duration: SIDES_FLIP_MS,
+      ease: 'Cubic.easeInOut',
+      onComplete: () => {
+        this.courtLayer.setRotation(0)
+        this.sidesFlipTween = null
+        this.sidesDim.setVisible(false)
+        this.tweens.add({
+          targets: this.sidesBanner,
+          alpha: 0,
+          duration: 400,
+        })
+      },
+    })
+  }
+
   private readonly onResize = (sz: { width: number; height: number }): void => {
     this.layoutCourt(sz.width, sz.height)
+    this.sidesDim.setPosition(sz.width / 2, sz.height / 2)
+    this.sidesDim.setSize(sz.width, sz.height)
+    this.sidesBanner.setPosition(sz.width / 2, sz.height / 2)
+    this.scoreText.setPosition(sz.width / 2, 12)
+    this.serveText.setPosition(sz.width / 2, 34)
+    this.toastText.setPosition(sz.width / 2, sz.height / 2 - 120)
   }
 
   private readonly onPointerDown = (p: Phaser.Input.Pointer): void => {
@@ -214,8 +301,7 @@ export class MatchScene extends Phaser.Scene {
     this.ch = COURT_L * this.scalePx
     this.ox = (width - this.cw) / 2
     this.oy = pad + 48
-    this.scoreText.setPosition(width / 2, 12)
-    this.serveText.setPosition(width / 2, 34)
+    this.courtLayer.setPosition(this.ox + this.cw / 2, this.oy + this.ch / 2)
   }
 
   private worldToScreen(xM: number, yM: number): { x: number; y: number } {
@@ -223,6 +309,13 @@ export class MatchScene extends Phaser.Scene {
       x: this.ox + courtPixelX(xM, this.cw),
       y: this.oy + courtPixelY(yM, this.opts.mySide, this.ch),
     }
+  }
+
+  private worldToLayer(xM: number, yM: number): { x: number; y: number } {
+    const g = this.worldToScreen(xM, yM)
+    const cx = this.ox + this.cw / 2
+    const cy = this.oy + this.ch / 2
+    return { x: g.x - cx, y: g.y - cy }
   }
 
   private screenToCourtMeters(sx: number, sy: number): { xM: number; yM: number } | null {
@@ -292,6 +385,7 @@ export class MatchScene extends Phaser.Scene {
     if (!this.indicatorMode || !this.indicatorBar) return
     const t = (this.time.now - this.indicatorStart) / 1000
     const v = 0.5 + 0.5 * Math.sin(t * (this.indicatorMode === 'power' ? 2.8 : 2.2))
+    matchAudio.racketHit()
     this.opts.socket.emit('game:input:indicator', {
       phase: this.indicatorMode,
       value: Math.max(0, Math.min(1, v)),
@@ -309,6 +403,21 @@ export class MatchScene extends Phaser.Scene {
     const dt = dtMs / 1000
     const s = this.lastState
     if (s) {
+      if (s.phase === 'playing' && this.bounceCd <= 0) {
+        const vy = s.ball.vy
+        if (this.prevBallVy !== null && this.prevBallVy * vy < 0) {
+          const mag = Math.max(Math.abs(this.prevBallVy), Math.abs(vy))
+          if (mag > 0.015) {
+            matchAudio.ballBounce()
+            this.bounceCd = 0.22
+          }
+        }
+        this.prevBallVy = vy
+      } else {
+        this.prevBallVy = null
+      }
+      this.bounceCd = Math.max(0, this.bounceCd - dt)
+
       this.drawCourt()
       this.drawBodies(s)
       this.scoreText.setText(this.formatScore(s))
@@ -389,28 +498,31 @@ export class MatchScene extends Phaser.Scene {
   private drawCourt(): void {
     const g = this.graphics
     g.clear()
+    const hw = this.cw / 2
+    const hh = this.ch / 2
     g.lineStyle(2, 0x6c6c8a, 1)
-    g.strokeRect(this.ox, this.oy, this.cw, this.ch)
-    const ny = this.oy + this.ch / 2
+    g.strokeRect(-hw, -hh, this.cw, this.ch)
     g.lineStyle(3, 0xffffff, 0.35)
-    g.lineBetween(this.ox, ny, this.ox + this.cw, ny)
+    g.lineBetween(-hw, 0, hw, 0)
     g.lineStyle(1, 0xffffff, 0.2)
-    g.lineBetween(this.ox + this.cw / 2, this.oy, this.ox + this.cw / 2, this.oy + this.ch)
+    g.lineBetween(0, -hh, 0, hh)
   }
 
   private drawBodies(s: GameStateWire): void {
     const bx = s.ball.x * COURT_W
     const by = s.ball.y * COURT_L
-    const bp = this.worldToScreen(bx, by)
+    const bp = this.worldToLayer(bx, by)
     this.ballG.setPosition(bp.x, bp.y)
 
-    const lp = this.worldToScreen(s.players.left.x * COURT_W, s.players.left.y * COURT_L)
-    const rp = this.worldToScreen(s.players.right.x * COURT_W, s.players.right.y * COURT_L)
+    const lp = this.worldToLayer(s.players.left.x * COURT_W, s.players.left.y * COURT_L)
+    const rp = this.worldToLayer(s.players.right.x * COURT_W, s.players.right.y * COURT_L)
     this.leftG.setPosition(lp.x, lp.y)
     this.rightG.setPosition(rp.x, rp.y)
   }
 
   shutdown(): void {
+    this.sidesFlipTween?.stop()
+    this.sidesFlipTween = null
     const sock = this.opts?.socket
     if (sock) {
       sock.off('game:state', this.onState)
