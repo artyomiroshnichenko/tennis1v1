@@ -10,7 +10,7 @@ export function destroyGame(): void {
 export function startPhaserPlaceholder(
   rootId: string,
   nickname: string,
-  mode: 'create' | 'bot',
+  mode: 'create' | 'bot' | 'online',
 ): void {
   destroyGame()
   const el = document.getElementById(rootId)
@@ -36,7 +36,11 @@ export function startPhaserPlaceholder(
           .text(
             400,
             240,
-            mode === 'bot' ? 'Режим: игра с ботом' : 'Режим: создать игру',
+            mode === 'bot'
+              ? 'Режим: игра с ботом'
+              : mode === 'online'
+                ? 'Режим: онлайн-матч'
+                : 'Режим: создать игру',
             { fontSize: '18px', color: '#a8a8b8', fontFamily: 'system-ui, sans-serif' },
           )
           .setOrigin(0.5)

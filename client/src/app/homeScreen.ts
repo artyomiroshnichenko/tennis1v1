@@ -13,6 +13,7 @@ import { getFirebaseAuth, firebaseConfigured } from '../firebaseApp'
 import { validateNicknameInput } from '../nicknameRules'
 import { LS_ACCESS, LS_NICKNAME, LS_REFRESH } from '../sessionKeys'
 import { destroyGame, startPhaserPlaceholder } from '../game/startPhaser'
+import { openLobbyCreate, openLobbyJoin } from './lobbyScreen'
 import '../ui/home.css'
 
 type ProfileState =
@@ -636,15 +637,59 @@ function render(): void {
 async function tryStart(mode: 'create' | 'bot'): Promise<void> {
   try {
     const nickname = await ensureReadyToPlay()
-    showGameView(mode, nickname)
+    if (mode === 'bot') {
+      showGameView(mode, nickname)
+      return
+    }
+    await openLobbyCreate({
+      nickname,
+      onLeave: () => {
+        showHomeView()
+        render()
+      },
+    })
   } catch (e) {
     alert(e instanceof Error ? e.message : 'Не удалось начать')
   }
+}
+
+async function joinRoomFromInvite(code: string): Promise<void> {
+  const run = async (): Promise<void> => {
+    try {
+      const nickname = await ensureReadyToPlay()
+      await openLobbyJoin({
+        code,
+        nickname,
+        onLeave: () => {
+          showHomeView()
+          render()
+        },
+      })
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Не удалось войти в комнату')
+      showHomeView()
+      render()
+    }
+  }
+  const nick = getDisplayNickname()
+  const nickOk = nick.length >= 3
+  if (!nickOk) {
+    openNicknameModal(() => {
+      void run()
+    })
+    return
+  }
+  await run()
 }
 
 export async function mountHome(root: HTMLElement): Promise<void> {
   appRoot = root
   await restoreSession()
   subscribeFirebaseAuth()
+  const roomParam = new URLSearchParams(window.location.search).get('room')
+  if (roomParam?.trim()) {
+    await joinRoomFromInvite(roomParam.trim())
+    return
+  }
   render()
 }

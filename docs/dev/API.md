@@ -105,7 +105,7 @@ socket.emit('error', { code: string, message: string })
 |---|---|---|
 | `room:created` | `{ code, roomId }` | Онлайн-комната создана, код для приглашения |
 | `bot:started` | `{ initialState, botName }` | Бот-матч начался — возвращает имя бота и начальное состояние |
-| `room:joined` | `{ side: 'left' \| 'right', players }` | Подтверждение входа в комнату |
+| `room:joined` | `{ side: 'left' \| 'right', players, lobbyChat? }` | Подтверждение входа; `players` — `{ nickname, side }[]`; `lobbyChat` — история чата лобби для синхронизации |
 | `room:full` | — | Комната заполнена |
 | `room:countdown` | `{ seconds }` | Отсчёт перед стартом (15 сек) |
 | `room:closed` | — | Комната закрыта |
