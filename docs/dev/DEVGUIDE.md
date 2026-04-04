@@ -209,6 +209,8 @@ npm run dev
 
 Гостевая сессия (`POST /auth/guest`) пишет refresh-токен в **PostgreSQL**. Без доступной БД сервер отвечает ошибкой (теперь с кодом **`DATABASE_UNAVAILABLE`** и пояснением в тексте).
 
+Сервер подхватывает **`server/.env` по пути к файлу**, а не только из текущего каталога: можно запускать `npm run dev` из **`server/`** или из **корня репозитория** — `DATABASE_URL` будет найден. После обновления кода перезапустите процесс `npm run dev`.
+
 1. **Docker:** `docker compose -f docker-compose.dev.yml ps` — контейнер `postgres` в статусе Up. Если нет: `docker compose -f docker-compose.dev.yml up -d`.
 2. **`server/.env`:** есть файл (скопировать из `server/.env.example`), заполнены **`DATABASE_URL`** (как в примере для локального postgres) и **`JWT_SECRET`**.
 3. **Миграции:** из каталога `server/` после `npm ci` или `npm install` выполнить **`npm run db:migrate`** (прод) или **`npm run db:migrate:dev`** (разработка). Не вызывайте **`npx prisma …`** без установленных зависимостей — npx может скачать **Prisma 7** и дать **P1012** на текущей схеме.
