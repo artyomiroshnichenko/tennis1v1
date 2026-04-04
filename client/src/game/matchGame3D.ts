@@ -973,19 +973,34 @@ export class MatchGame3D {
 
     this.idealCamPos.set(cx, 13.5, cz)
     const lookY = 2.2
-    const bx = this.ball.position.x
-    const bz = this.ball.position.z
-    const tx = bx * 0.42 + sw.x * 0.58
-    const tz = bz * 0.42 + sw.z * 0.58
-    this.idealCamLook.set(tx, lookY, tz)
 
+    const opponentServe =
+      !this.opts.spectator &&
+      (s.phase === 'serve_prep' || s.phase === 'serving') &&
+      s.serving !== this.opts.mySide
+
+    if (opponentServe) {
+      const along = this.opts.mySide === 'left' ? -1 : 1
+      this.idealCamLook.set(sw.x, lookY, sw.z + along * 9)
+    } else {
+      const bx = this.ball.position.x
+      const bz = this.ball.position.z
+      const tx = bx * 0.42 + sw.x * 0.58
+      const tz = bz * 0.42 + sw.z * 0.58
+      this.idealCamLook.set(tx, lookY, tz)
+    }
+
+    const ac = 1 - Math.exp(-3.4 * dt)
     if (this.camSmoothPos.distanceTo(this.idealCamPos) > 24) {
       this.camSmoothPos.copy(this.idealCamPos)
       this.camSmoothLook.copy(this.idealCamLook)
     } else {
-      const ac = 1 - Math.exp(-3.4 * dt)
       this.camSmoothPos.lerp(this.idealCamPos, ac)
-      this.camSmoothLook.lerp(this.idealCamLook, ac)
+      if (opponentServe) {
+        this.camSmoothLook.copy(this.idealCamLook)
+      } else {
+        this.camSmoothLook.lerp(this.idealCamLook, ac)
+      }
     }
 
     this.camera.position.copy(this.camSmoothPos)
