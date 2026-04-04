@@ -447,6 +447,8 @@ docker compose -f docker-compose.prod.yml exec server npm run db:migrate
 docker compose -f docker-compose.prod.yml ps
 ```
 
+В выводе `ps` для прода должна быть БД с именем контейнера **`tennis1v1_postgres`**. Если видите только **`tennis1v1_postgres_dev`** — это контейнер из **`docker-compose.dev.yml`**: он в **другой** Docker-сети, прод-контейнер **`server` не сможет** достучаться до хоста `postgres` (P1001). Поднимите продовский Postgres: `docker compose -f docker-compose.prod.yml up -d postgres` (или весь стек `up -d`). При желании остановите dev-стек на VPS: `docker compose -f docker-compose.dev.yml down`, чтобы не путаться.
+
 Открыть https://engbotai.ru — игра должна быть доступна.
 
 ---
