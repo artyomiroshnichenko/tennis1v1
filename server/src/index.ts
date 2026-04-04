@@ -2,6 +2,7 @@ import cors from 'cors'
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
+import { allowRelaxedAuthStorage } from './auth/devAuthRelax'
 import { apiV1Router } from './api/v1'
 import { prisma } from './lib/prisma'
 import { registerLobbySocket } from './socket/lobbySocket'
@@ -47,4 +48,11 @@ registerLobbySocket(io)
 
 httpServer.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`)
+  if (allowRelaxedAuthStorage()) {
+    console.log('[auth] Гость может работать без PostgreSQL (in-memory при сбое БД).')
+  } else {
+    console.log(
+      '[auth] Гостевой вход требует БД. Без Postgres добавьте в server/.env строку: ALLOW_OFFLINE_GUEST=1',
+    )
+  }
 })

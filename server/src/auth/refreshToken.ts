@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto'
 import type { AuthSubjectType, Prisma } from '@prisma/client'
 import { isDatabaseUnavailableError } from '../lib/prismaErrors'
 import { prisma } from '../lib/prisma'
+import { allowRelaxedAuthStorage } from './devAuthRelax'
 import {
   memoryConsumeRefreshToken,
   memoryPutRefreshToken,
@@ -27,13 +28,12 @@ function parseRefreshMs(): number {
   }
 }
 
-function allowDevMemoryRefresh(): boolean {
-  if (process.env.DISABLE_DEV_MEMORY_REFRESH === '1') return false
-  return process.env.NODE_ENV !== 'production'
+function shouldUseMemoryRefreshFallback(e: unknown): boolean {
+  return allowRelaxedAuthStorage() && isDatabaseUnavailableError(e)
 }
 
-function shouldUseMemoryRefreshFallback(e: unknown): boolean {
-  return allowDevMemoryRefresh() && isDatabaseUnavailableError(e)
+export function getRefreshExpiresAtDate(): Date {
+  return new Date(Date.now() + parseRefreshMs())
 }
 
 export async function issueRefreshToken(

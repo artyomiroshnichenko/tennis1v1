@@ -6,6 +6,16 @@ export function isDatabaseUnavailableError(e: unknown): boolean {
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
     return ['P1001', 'P1002', 'P1017', 'P2021', 'P2010'].includes(e.code)
   }
+  if (e instanceof Error) {
+    const m = e.message
+    if (
+      /P1001|Can't reach database|ECONNREFUSED|ENOTFOUND|getaddrinfo|connect ECONNREFUSED|Connection refused/i.test(
+        m,
+      )
+    ) {
+      return true
+    }
+  }
   return false
 }
 
