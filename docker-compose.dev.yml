@@ -11,6 +11,43 @@ services:
       - "5432:5432"
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d tennis1v1']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Одноразово: применить миграции в той же Docker-сети, что и postgres (хост `postgres` резолвится).
+  # С хоста: docker compose -f docker-compose.dev.yml --profile migrate run --rm prisma-migrate
+  prisma-migrate:
+    profiles: [migrate]
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./server:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/tennis1v1
+    command: ['sh', '-c', 'apk add --no-cache openssl && npm ci && npm run db:migrate']
+
+  # Интерактивно создать миграцию (prisma migrate dev): нужен TTY.
+  # docker compose -f docker-compose.dev.yml --profile migrate-dev run --rm prisma-migrate-dev
+  prisma-migrate-dev:
+    profiles: [migrate-dev]
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./server:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/tennis1v1
+    stdin_open: true
+    tty: true
+    command: ['sh', '-c', 'apk add --no-cache openssl && npm ci && npm run db:migrate:dev']
 
 volumes:
   postgres_dev_data:

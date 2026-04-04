@@ -232,6 +232,30 @@ npm run db:migrate:dev
 
 Процесс API **не слушает** порт 3000: запустите сервер (`cd server && npm run dev`) или поднимите стек, в котором есть сервис **`server`**. Пока сервер не запущен, health-check из браузера недоступен.
 
+**Миграции, когда в `server/.env` указано `@postgres:5432`, а `npm run db:migrate:dev` запускаете не из сети compose**
+
+Имя `postgres` не резолвится (типично: вы в другом контейнере или на хосте с prod-URL в `.env`). Варианты:
+
+1. **С хоста** (репозиторий в текущем каталоге), Postgres из dev-compose уже **Up**: в `server/.env` для локальных команд поставьте **`127.0.0.1`**, затем `cd server && npm run db:migrate:dev`.
+
+2. **Через dev-compose** (одна сеть с `tennis1v1_postgres_dev`; `DATABASE_URL` внутри job задан в compose, `.env` не нужен для хоста БД):
+
+   ```bash
+   # из корня репозитория (где лежит docker-compose.dev.yml)
+   docker compose -f docker-compose.dev.yml up -d postgres
+   docker compose -f docker-compose.dev.yml --profile migrate run --rm prisma-migrate
+   ```
+
+   Это выполняет **`npm run db:migrate`** (`prisma migrate deploy`) — применяет уже существующие миграции.
+
+   Создать **новую** миграцию интерактивно:
+
+   ```bash
+   docker compose -f docker-compose.dev.yml --profile migrate-dev run --rm prisma-migrate-dev
+   ```
+
+Сообщение **orphan containers** значит, что подняты контейнеры из **другого** compose (например prod: `server`, `nginx`). Их можно остановить отдельно: `docker compose -f docker-compose.prod.yml down`, либо при необходимости `docker compose -f docker-compose.dev.yml up -d --remove-orphans` (осторожно: флаг удалит «осиротевшие» контейнеры этого проекта).
+
 ---
 
 ### Если при сохранении никнейма «внутренняя ошибка» или не стартует игра
