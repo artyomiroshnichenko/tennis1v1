@@ -205,6 +205,35 @@ npm run dev
 
 ---
 
+### P1001 (`postgres:5432`), миграции и «Error Code: -102» на :3000
+
+**Почему Prisma пишет `Can't reach database server at postgres:5432`**
+
+Имя хоста **`postgres`** резолвится **только** внутри Docker-сети, где есть сервис с таким именем (например `docker-compose.prod.yml`: контейнеры `server` и `postgres` в одной сети `internal`). С **хоста** (WSL, ноутбук) или из контейнера **без** этой сети `postgres` не существует → **P1001**.
+
+| Где выполняете команды | Что указать в `DATABASE_URL` |
+|---|---|
+| Локально: `npm run dev` / `npm run db:migrate:dev` в каталоге `server/` на машине разработчика | `...@127.0.0.1:5432/...` (Postgres из `docker-compose.dev.yml` с пробросом порта 5432) |
+| Внутри контейнера **`server`** при поднятом **`docker-compose.prod.yml`** (оба сервиса в одном compose) | `...@postgres:5432/...` |
+
+Если скопировали продовый `.env` с `postgres` на локальную машину — замените хост на **`127.0.0.1`**. Если миграции запускаете **на сервере** через `docker compose ... exec server` — в `.env` внутри образа должен остаться **`postgres`**, и контейнер **`tennis1v1_postgres`** (prod) должен быть **Up** (не путать с `tennis1v1_postgres_dev` из dev-compose).
+
+**`db:migrate:dev: command not found`**
+
+Это npm-скрипт, не команда оболочки. Из каталога **`server/`**:
+
+```bash
+npm run db:migrate:dev
+```
+
+Для продакшена в контейнере обычно: `npm run db:migrate` (без `dev`).
+
+**Браузер: `http://localhost:3000/health/ready` → Error Code -102 (или соединение отклонено)**
+
+Процесс API **не слушает** порт 3000: запустите сервер (`cd server && npm run dev`) или поднимите стек, в котором есть сервис **`server`**. Пока сервер не запущен, health-check из браузера недоступен.
+
+---
+
 ### Если при сохранении никнейма «внутренняя ошибка» или не стартует игра
 
 Гостевая сессия (`POST /auth/guest`) пишет refresh-токен в **PostgreSQL**. Без доступной БД сервер отвечает ошибкой (теперь с кодом **`DATABASE_UNAVAILABLE`** и пояснением в тексте).
@@ -213,7 +242,7 @@ npm run dev
 
 1. **Docker:** `docker compose -f docker-compose.dev.yml ps` — контейнер `postgres` в статусе Up. Если нет: `docker compose -f docker-compose.dev.yml up -d`.
 2. **`server/.env`:** есть файл (скопировать из `server/.env.example`), заполнен **`DATABASE_URL`**. **`JWT_SECRET`** обязателен в production; в development при отсутствии подставляется временный ключ (в логах сервера будет предупреждение).
-3. **Миграции:** из каталога `server/` после `npm ci` или `npm install` выполнить **`npm run db:migrate`** (прод) или **`npm run db:migrate:dev`** (разработка). Не вызывайте **`npx prisma …`** без установленных зависимостей — npx может скачать **Prisma 7** и дать **P1012** на текущей схеме.
+3. **Миграции:** из каталога `server/` после `npm ci` или `npm install` выполнить **`npm run db:migrate`** (прод) или **`npm run db:migrate:dev`** (разработка). Пишите именно **`npm run …`**, а не `db:migrate:dev` в bash. Не вызывайте **`npx prisma …`** без установленных зависимостей — npx может скачать **Prisma 7** и дать **P1012** на текущей схеме.
 4. **Проверка:** в браузере открыть http://localhost:3000/health/ready — ожидается JSON с `"database": "up"`.
 5. Коды ответа API: **`DATABASE_SCHEMA`** (503) — не применены миграции; **`DATABASE_UNAVAILABLE`** (503) — Postgres не достучаться.
 
