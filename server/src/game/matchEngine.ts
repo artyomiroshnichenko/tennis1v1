@@ -10,9 +10,11 @@ import {
   NET_CLEAR_Z,
   NET_Y,
   PLAYER_SPEED,
+  AIM_DIRECTION_SPAN_RAD,
   POINT_PAUSE_MS,
   SERVE_AIM_TIMEOUT_MS,
   SERVE_POWER_TIMEOUT_MS,
+  SERVE_READY_TIMEOUT_MS,
   SIDES_CHANGE_MS,
   TICK_DT,
 } from './constants'
@@ -49,6 +51,7 @@ function norm(x: number, y: number): { x: number; y: number } {
 type Phase =
   | { k: 'point_pause'; until: number }
   | { k: 'sides_change'; until: number }
+  | { k: 'serve_ready'; server: Side; until: number }
   | { k: 'serve_power'; server: Side; until: number }
   | { k: 'serve_aim'; server: Side; power: number; until: number }
   | { k: 'rally' }
@@ -60,7 +63,7 @@ export type PendingEmit = {
   point?: { scorer: Side; reason: string }
   event?: GameEventType
   servePrompt?: Side
-  indicator?: { phase: 'direction' | 'power' }
+  indicator?: { phase: 'direction' | 'power'; forSide: Side }
   sidesChange?: boolean
   pause?: {
     reason: 'disconnect' | 'resume_countdown'
@@ -74,7 +77,7 @@ export type PendingEmit = {
 
 export class MatchEngine {
   readonly score: ScoreInternal
-  phase: Phase = { k: 'serve_power', server: 'left', until: 0 }
+  phase: Phase = { k: 'serve_ready', server: 'left', until: 0 }
   ball = { x: COURT_W / 2, y: NET_Y, z: 1.2, vx: 0, vy: 0, vz: 0 }
   pl = { x: COURT_W / 2, y: COURT_L - 1.1, dx: 0, dy: 0 }
   pr = { x: COURT_W / 2, y: 1.1, dx: 0, dy: 0 }
@@ -89,7 +92,6 @@ export class MatchEngine {
   lastStrongHitBy: Side | null = null
   timeMs = 0
   private serveInPlay = false
-  private aimSpread = 0
   private pendingSidesChange = false
 
   constructor(firstServer: Side) {
@@ -106,9 +108,9 @@ export class MatchEngine {
     this.ball.y = firstServer === 'left' ? bp.y - 0.4 : bp.y + 0.4
     this.ball.z = 1.1
     this.phase = {
-      k: 'serve_power',
+      k: 'serve_ready',
       server: firstServer,
-      until: this.timeMs + SERVE_POWER_TIMEOUT_MS,
+      until: this.timeMs + SERVE_READY_TIMEOUT_MS,
     }
   }
 
@@ -138,12 +140,11 @@ export class MatchEngine {
   beginAfterPause(): PendingEmit {
     const srv = currentServer(this.score)
     this.resetBallAtServer(srv)
-    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    this.phase = { k: 'serve_ready', server: srv, until: this.timeMs + SERVE_READY_TIMEOUT_MS }
     this.plState = 'idle'
     this.prState = 'idle'
     return {
       servePrompt: srv,
-      indicator: { phase: 'power' },
     }
   }
 
@@ -159,6 +160,7 @@ export class MatchEngine {
   getWirePhase(): GamePhase {
     if (this.phase.k === 'done') return 'over'
     if (this.phase.k === 'point_pause' || this.phase.k === 'sides_change') return 'pause'
+    if (this.phase.k === 'serve_ready') return 'serve_prep'
     if (this.phase.k === 'serve_power' || this.phase.k === 'serve_aim') return 'serving'
     return 'playing'
   }
@@ -166,6 +168,7 @@ export class MatchEngine {
   /** Сторона и фаза индикатора, если движок ждёт ввод подачи/удара. */
   getIndicatorNeed(): { side: Side; phase: 'direction' | 'power' } | null {
     const ph = this.phase
+    if (ph.k === 'serve_ready') return null
     if (ph.k === 'serve_power') return { side: ph.server, phase: 'power' }
     if (ph.k === 'serve_aim') return { side: ph.server, phase: 'direction' }
     if (ph.k === 'hit_dir') return { side: ph.for, phase: 'direction' }
@@ -175,14 +178,28 @@ export class MatchEngine {
 
   /** Аннулировать текущую фазу подачи/удара без изменения счёта (эпик 08). */
   abortStrikeIfPending(): PendingEmit[] {
-    if (!this.getIndicatorNeed()) return []
+    const ph = this.phase
+    const strikePending =
+      ph.k === 'serve_ready' ||
+      ph.k === 'serve_power' ||
+      ph.k === 'serve_aim' ||
+      ph.k === 'hit_dir' ||
+      ph.k === 'hit_pwr'
+    if (!strikePending) return []
     const srv = currentServer(this.score)
     this.resetBallAtServer(srv)
-    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    this.phase = { k: 'serve_ready', server: srv, until: this.timeMs + SERVE_READY_TIMEOUT_MS }
     this.plState = 'idle'
     this.prState = 'idle'
     this.serveInPlay = false
-    return [{ servePrompt: srv, indicator: { phase: 'power' } }]
+    return [{ servePrompt: srv }]
+  }
+
+  /** Подтверждение готовности к подаче (тап / ввод клиента). */
+  confirmServeReady(side: Side): PendingEmit | null {
+    if (this.phase.k !== 'serve_ready' || side !== this.phase.server) return null
+    this.phase = { k: 'serve_power', server: side, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    return { indicator: { phase: 'power', forSide: side } }
   }
 
   getWireState(): GameStateWire {
@@ -207,12 +224,12 @@ export class MatchEngine {
   }
 
   setMove(side: Side, dx: number, dy: number): void {
-    const servePhase = this.phase.k === 'serve_power' || this.phase.k === 'serve_aim'
-    if (this.phase.k !== 'rally' && !servePhase) {
-      if (this.phase.k === 'hit_dir' || this.phase.k === 'hit_pwr') return
-    }
-    if (this.phase.k === 'serve_power' || this.phase.k === 'serve_aim') {
-      if (side !== this.phase.server) return
+    const ph = this.phase
+    if (ph.k === 'point_pause' || ph.k === 'sides_change' || ph.k === 'done') return
+    if (ph.k === 'hit_dir' || ph.k === 'hit_pwr') return
+
+    if (ph.k === 'serve_ready' || ph.k === 'serve_power' || ph.k === 'serve_aim') {
+      if (side === ph.server) return
       const p = this.playerBody(side)
       p.dx = dx
       p.dy = dy
@@ -220,7 +237,8 @@ export class MatchEngine {
       else this.setPlayerState(side, 'idle')
       return
     }
-    if (this.phase.k === 'rally') {
+
+    if (ph.k === 'rally') {
       const p = this.playerBody(side)
       p.dx = dx
       p.dy = dy
@@ -235,7 +253,7 @@ export class MatchEngine {
     p.dx = 0
     p.dy = 0
     this.phase = { k: 'hit_dir', for: forSide, until: this.timeMs + HIT_INDICATOR_TIMEOUT_MS }
-    return { indicator: { phase: 'direction' } }
+    return { indicator: { phase: 'direction', forSide: forSide } }
   }
 
   private canReachBall(side: Side): boolean {
@@ -254,16 +272,15 @@ export class MatchEngine {
         until: this.timeMs + SERVE_AIM_TIMEOUT_MS,
       }
       this.setPlayerState(side, 'serving')
-      return { indicator: { phase: 'direction' } }
+      return { indicator: { phase: 'direction', forSide: side } }
     }
     if (this.phase.k === 'serve_aim' && phase === 'direction' && side === this.phase.server) {
-      this.aimSpread = 1 - v
       this.fireServe(this.phase.server, this.phase.power, v)
       return null
     }
     if (this.phase.k === 'hit_dir' && phase === 'direction' && side === this.phase.for) {
       this.phase = { k: 'hit_pwr', for: side, dir: v, until: this.timeMs + HIT_INDICATOR_TIMEOUT_MS }
-      return { indicator: { phase: 'power' } }
+      return { indicator: { phase: 'power', forSide: side } }
     }
     if (this.phase.k === 'hit_pwr' && phase === 'power' && side === this.phase.for) {
       this.fireGroundstroke(side, this.phase.dir, v)
@@ -275,12 +292,13 @@ export class MatchEngine {
   private fireServe(server: Side, power: number, accuracyRaw: number): void {
     const speed =
       BALL_SPEED_MIN + (BALL_SPEED_MAX - BALL_SPEED_MIN) * (0.35 + 0.65 * clamp01(power))
-    const p = this.playerBody(server)
-    const targetX = COURT_W / 2 + (accuracyRaw - 0.5) * 2.2 * this.aimSpread
-    const targetY = server === 'left' ? NET_Y - 1.4 : NET_Y + 1.4
-    let dir = norm(targetX - this.ball.x, targetY - this.ball.y)
-    this.ball.vx = dir.x * speed
-    this.ball.vy = dir.y * speed
+    const ang = (accuracyRaw - 0.5) * AIM_DIRECTION_SPAN_RAD
+    const toward = server === 'left' ? -1 : 1
+    const sdx = Math.sin(ang)
+    const sdy = Math.cos(ang) * toward
+    const d = norm(sdx, sdy)
+    this.ball.vx = d.x * speed
+    this.ball.vy = d.y * speed
     this.ball.vz = 4.2 + 3.5 * clamp01(power)
     this.lastHit = server
     this.serveInPlay = true
@@ -297,7 +315,7 @@ export class MatchEngine {
       const prevStrong = this.lastStrongHitBy === 'left' ? this.pl : this.pr
       void prevStrong
     }
-    const ang = (dirT - 0.5) * Math.PI * 0.62
+    const ang = (dirT - 0.5) * AIM_DIRECTION_SPAN_RAD
     const toward = side === 'left' ? -1 : 1
     const dx = Math.sin(ang)
     const dy = Math.cos(ang) * toward
@@ -350,6 +368,12 @@ export class MatchEngine {
     if (this.phase.k === 'done') {
       this.integratePlayers(dt)
       return out
+    }
+
+    if (this.phase.k === 'serve_ready' && this.timeMs >= this.phase.until) {
+      const srv = this.phase.server
+      this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+      out.push({ indicator: { phase: 'power', forSide: srv } })
     }
 
     if (this.phase.k === 'serve_power' && this.timeMs >= this.phase.until) {
@@ -450,8 +474,9 @@ export class MatchEngine {
       }
       if (zCross < NET_CLEAR_Z) {
         if (this.serveInPlay) {
+          const srv = currentServer(this.score)
           this.emitLetReset()
-          return { event: 'let' }
+          return { event: 'let', servePrompt: srv }
         }
         return this.awardPointFromNetOrOut('net')
       }
@@ -475,7 +500,7 @@ export class MatchEngine {
   private emitLetReset(): void {
     const srv = currentServer(this.score)
     this.resetBallAtServer(srv)
-    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
+    this.phase = { k: 'serve_ready', server: srv, until: this.timeMs + SERVE_READY_TIMEOUT_MS }
   }
 
   private onGroundContact(): PendingEmit | null {
@@ -523,8 +548,8 @@ export class MatchEngine {
     }
     const srv = currentServer(this.score)
     this.resetBallAtServer(srv)
-    this.phase = { k: 'serve_power', server: srv, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
-    return { event: reason === 'net' ? 'net' : 'fault', servePrompt: srv, indicator: { phase: 'power' } }
+    this.phase = { k: 'serve_ready', server: srv, until: this.timeMs + SERVE_READY_TIMEOUT_MS }
+    return { event: reason === 'net' ? 'net' : 'fault', servePrompt: srv }
   }
 
   private handleServeTimeout(server: Side): PendingEmit[] {
@@ -537,8 +562,8 @@ export class MatchEngine {
       return this.awardPoint(other(server), 'Таймаут подачи')
     }
     this.resetBallAtServer(server)
-    this.phase = { k: 'serve_power', server, until: this.timeMs + SERVE_POWER_TIMEOUT_MS }
-    return [{ event: 'fault', servePrompt: server, indicator: { phase: 'power' } }]
+    this.phase = { k: 'serve_ready', server, until: this.timeMs + SERVE_READY_TIMEOUT_MS }
+    return [{ event: 'fault', servePrompt: server }]
   }
 
   private awardMatchLoss(loser: Side, reason: string): PendingEmit[] {

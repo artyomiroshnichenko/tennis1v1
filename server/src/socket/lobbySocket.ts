@@ -137,6 +137,15 @@ export function registerLobbySocket(io: Server): void {
       rooms.handleGameInputIndicator(socket.id, payload ?? {})
     })
 
+    socket.on('game:input:serve_ready', () => {
+      const b = botBySocket.get(socket.id)
+      if (b) {
+        b.confirmServeReady()
+        return
+      }
+      rooms.handleGameInputServeReady(socket.id)
+    })
+
     socket.on('bot:start', (payload: { nickname?: string; difficulty?: string }) => {
       try {
         readNickname(socket, payload?.nickname)

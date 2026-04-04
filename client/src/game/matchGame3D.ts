@@ -184,6 +184,8 @@ export class MatchGame3D {
   private sidesBanner!: HTMLDivElement
   private flipT0 = 0
   private flipping = false
+  private servePrepOverlayEl: HTMLDivElement | null = null
+  private servePrepBlockingInput = false
 
   private scalePx = 1
 
@@ -402,8 +404,9 @@ export class MatchGame3D {
     this.lastState = s
   }
 
-  private readonly onIndicator = (p: { phase: 'direction' | 'power' }): void => {
+  private readonly onIndicator = (p: { phase: 'direction' | 'power'; forSide?: Side }): void => {
     if (this.opts.spectator) return
+    if (p.forSide !== undefined && p.forSide !== this.opts.mySide) return
     this.showIndicator(p.phase)
   }
 
@@ -613,6 +616,16 @@ export class MatchGame3D {
   private onKeyDown(e: KeyboardEvent): void {
     this.keysDown.add(e.code)
     if (e.code === 'Space') e.preventDefault()
+    const s = this.lastState
+    const servePrep =
+      !this.opts.spectator &&
+      !!s &&
+      s.phase === 'serve_prep' &&
+      s.serving === this.opts.mySide
+    if (e.code === 'Space' && servePrep && !this.indicatorMode) {
+      this.opts.socket.emit('game:input:serve_ready')
+      return
+    }
     if (e.code === 'Space' && this.indicatorMode) {
       this.commitIndicator()
     }
@@ -627,6 +640,7 @@ export class MatchGame3D {
 
   private onPointerDown(e: PointerEvent): void {
     if (this.opts.spectator) return
+    if (this.servePrepBlockingInput) return
     if (this.indicatorMode) {
       this.commitIndicator()
       return
@@ -680,6 +694,7 @@ export class MatchGame3D {
     const s = this.lastState
     if (s) {
       this.syncScene(s)
+      this.syncServePrepOverlay(s)
       this.scoreEl.textContent = this.formatScore(s)
       const srv = this.opts.spectator
         ? s.serving === 'left'
@@ -688,13 +703,60 @@ export class MatchGame3D {
         : s.serving === this.opts.mySide
           ? 'Ваша подача'
           : 'Подача соперника'
-      this.serveEl.textContent = s.phase === 'serving' || s.phase === 'playing' ? srv : ''
+      this.serveEl.textContent =
+        s.phase === 'serve_prep'
+          ? this.opts.spectator
+            ? srv
+            : s.serving === this.opts.mySide
+              ? 'Подготовка к вашей подаче'
+              : 'Ожидание подачи соперника'
+          : s.phase === 'serving' || s.phase === 'playing'
+            ? srv
+            : ''
     }
     this.updateSidesFlip()
     this.updateCamera()
     this.updateIndicatorAnimation()
     this.emitMovement(dt)
     this.renderer.render(this.scene, this.camera)
+  }
+
+  private syncServePrepOverlay(s: GameStateWire): void {
+    const blocking =
+      !this.opts.spectator &&
+      s.phase === 'serve_prep' &&
+      s.serving === this.opts.mySide
+    if (blocking && !this.servePrepBlockingInput) {
+      this.pointerTarget = null
+      this.opts.socket.emit('game:input:move', { dx: 0, dy: 0 })
+    }
+    this.servePrepBlockingInput = blocking
+
+    if (!blocking) {
+      if (this.servePrepOverlayEl) this.servePrepOverlayEl.style.display = 'none'
+      return
+    }
+
+    if (!this.servePrepOverlayEl) {
+      const el = document.createElement('div')
+      el.className = 'match-serve-prep-overlay'
+      el.style.cssText =
+        'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(8,12,20,0.5);z-index:22;color:#f0f4ff;font:16px system-ui,sans-serif;text-align:center;padding:24px;cursor:pointer;touch-action:manipulation;user-select:none'
+      const msg = document.createElement('div')
+      msg.textContent = 'Нажмите на экран или Пробел'
+      const sub = document.createElement('div')
+      sub.style.cssText = 'font-size:13px;color:#a8b0c8'
+      sub.textContent = 'Подтвердите готовность к подаче'
+      el.append(msg, sub)
+      el.addEventListener('pointerdown', (ev) => {
+        ev.preventDefault()
+        if (!this.servePrepBlockingInput) return
+        this.opts.socket.emit('game:input:serve_ready')
+      })
+      this.root.appendChild(el)
+      this.servePrepOverlayEl = el
+    }
+    this.servePrepOverlayEl.style.display = 'flex'
   }
 
   private syncScene(s: GameStateWire): void {
@@ -985,6 +1047,9 @@ export class MatchGame3D {
     sock.off('bot:pause:state', this.onBotPauseState)
     this.hidePauseOverlay()
     this.hideIndicator()
+    this.servePrepOverlayEl?.remove()
+    this.servePrepOverlayEl = null
+    this.servePrepBlockingInput = false
     this.indicatorEl?.remove()
     this.indicatorEl = null
     this.indicatorBar = null

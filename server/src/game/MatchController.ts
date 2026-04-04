@@ -51,7 +51,6 @@ export class MatchController {
     this.io.to(roomName).emit('game:start', { initialState: initial })
     const srv = currentServer(this.engine.score)
     this.io.to(roomName).emit('game:serve:prompt', { side: srv })
-    this.io.to(roomName).emit('game:indicator:show', { phase: 'power' })
 
     this.lastTickMs = performance.now()
     this.timer = setInterval(() => this.tickReal(), 1000 / 60)
@@ -340,6 +339,13 @@ export class MatchController {
     const side = this.socketToSide.get(socketId)
     if (!side || this.stopped) return
     const pending = this.engine.applyIndicator(side, phase, value)
+    if (pending) this.applyEmit(pending)
+  }
+
+  confirmServeReady(socketId: string): void {
+    const side = this.socketToSide.get(socketId)
+    if (!side || this.stopped) return
+    const pending = this.engine.confirmServeReady(side)
     if (pending) this.applyEmit(pending)
   }
 }

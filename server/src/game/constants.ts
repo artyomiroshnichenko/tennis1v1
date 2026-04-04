@@ -19,8 +19,14 @@ export const GRAVITY = 12
 export const NET_CLEAR_Z = 0.42
 export const BALL_REST_Z = 0.01
 
+/** Ожидание тапа «готов к подаче» (после чего открывается индикатор силы). */
+export const SERVE_READY_TIMEOUT_MS = 90_000
+
 export const SERVE_POWER_TIMEOUT_MS = 7000
 export const SERVE_AIM_TIMEOUT_MS = 7000
+
+/** Совпадает с клиентом: стрелка направления качается примерно от −88° до +88° (всего 176°). */
+export const AIM_DIRECTION_SPAN_RAD = (176 * Math.PI) / 180
 export const HIT_INDICATOR_TIMEOUT_MS = 3000
 
 export const POINT_PAUSE_MS = 2200

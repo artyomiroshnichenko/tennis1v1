@@ -500,6 +500,12 @@ export class RoomManager {
     room.match.applyIndicator(socketId, ph, v)
   }
 
+  handleGameInputServeReady(socketId: string): void {
+    const room = this.getRoomBySocket(socketId)
+    if (!room?.match) return
+    room.match.confirmServeReady(socketId)
+  }
+
   /** Явный выход (кнопка «Выйти» / room:leave). */
   leaveRoomPlayerIntentional(socketId: string): void {
     const room = this.getRoomBySocket(socketId)

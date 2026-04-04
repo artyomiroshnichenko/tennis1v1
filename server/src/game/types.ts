@@ -4,7 +4,7 @@ export type Side = 'left' | 'right'
 
 export type PlayerState = 'idle' | 'running' | 'hitting' | 'serving'
 
-export type GamePhase = 'serving' | 'playing' | 'pause' | 'over'
+export type GamePhase = 'serve_prep' | 'serving' | 'playing' | 'pause' | 'over'
 
 export type Score = {
   sets: [number, number][]

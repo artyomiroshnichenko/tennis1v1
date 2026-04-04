@@ -101,6 +101,7 @@ socket.emit('error', { code: string, message: string })
 | `room:rejoin` | `{ code }` | Переподключиться к текущему онлайн-матчу после обрыва сокета (тот же JWT и ник, слот с `socketId = null`) |
 | `room:rematch` | — | Запрос на реванш |
 | `game:input:move` | `{ dx, dy }` | Направление движения игрока |
+| `game:input:serve_ready` | — | Подтверждение готовности к подаче: в фазе `serve_prep` подающий нажимает (тап/Пробел), после чего сервер открывает индикатор силы (`game:indicator:show` с `phase: 'power'`) |
 | `game:input:indicator` | `{ phase: 'direction' \| 'power', value: number }` | Нажатие индикатора удара — фаза и позиция (0–1) |
 | `chat:message` | `{ text }` | Сообщение в чат комнаты: лобби (ожидание/отсчёт) и во время матча или на экране результата — всем в комнате, включая наблюдателей |
 | `chat:reaction` | `{ type: 'heart' \| 'fire' \| 'cry' \| 'halo' \| 'angry' }` | Отправить реакцию |
@@ -120,10 +121,10 @@ socket.emit('error', { code: string, message: string })
 | `room:countdown` | `{ seconds }` | Отсчёт перед стартом (15 сек) |
 | `room:closed` | — | Комната закрыта |
 | `game:start` | `{ initialState }` | Матч начался |
-| `game:state` | `{ ball, players, score, serving }` | Состояние игры ~60fps |
+| `game:state` | `{ ball, players, score, serving, phase }` | Состояние игры ~60fps; `phase` включает `serve_prep` (ожидание готовности подающего) |
 | `game:point` | `{ scorer, score, reason }` | Очко засчитано |
 | `game:serve:prompt` | `{ side }` | Приглашение выполнить подачу |
-| `game:indicator:show` | `{ phase: 'direction' \| 'power' }` | Показать индикатор — клиент запускает анимацию полосы |
+| `game:indicator:show` | `{ phase: 'direction' \| 'power', forSide: 'left' \| 'right' }` | Показать индикатор только игроку `forSide` — клиент запускает анимацию; соперник событие игнорирует |
 | `game:event` | `{ type: 'ace' \| 'net' \| 'out' \| 'let' \| 'fault' }` | Игровое событие |
 | `game:sides:change` | — | Смена сторон |
 | `game:pause` | `{ reason, seconds, source?, deadlineTs? }` | `reason: 'disconnect'` + `source: 'peer'` — ожидание соперника до **3 мин** (`deadlineTs` — эпоха ms для синхронизации UI); `reason: 'resume_countdown'` — после переподключения **10 с** до `game:resume`; `source: 'tab'` + `disconnect` — бот-матч, пауза 15 с |
@@ -148,7 +149,7 @@ type GameState = {
   }
   score: Score
   serving: 'left' | 'right'
-  phase: 'serving' | 'playing' | 'pause' | 'over'
+  phase: 'serve_prep' | 'serving' | 'playing' | 'pause' | 'over'
 }
 
 type Score = {

@@ -46,7 +46,7 @@ export class BotMatchController {
     const need = this.engine.getIndicatorNeed()
     if (need) {
       if (need.side === this.botSide) this.flushBotIndicators()
-      else this.toPlayer('game:indicator:show', { phase: need.phase })
+      else this.toPlayer('game:indicator:show', { phase: need.phase, forSide: need.side })
     }
 
     this.lastTickMs = performance.now()
@@ -160,12 +160,21 @@ export class BotMatchController {
     this.accum += dt
     while (this.accum >= TICK_DT) {
       this.accum -= TICK_DT
+      this.autoBotServeReady()
       this.updateBotMove(TICK_DT)
       const outs = this.engine.step(TICK_DT)
       for (const e of outs) this.applyEmit(e)
       if (this.stopped) return
     }
     this.toPlayer('game:state', this.engine.getWireState())
+  }
+
+  private autoBotServeReady(): void {
+    const ph = this.engine.phase
+    if (ph.k === 'serve_ready' && ph.server === this.botSide) {
+      const pending = this.engine.confirmServeReady(this.botSide)
+      if (pending) this.applyEmit(pending)
+    }
   }
 
   private updateBotMove(_dt: number): void {
@@ -232,6 +241,12 @@ export class BotMatchController {
   applyIndicator(phase: 'direction' | 'power', value: number): void {
     if (this.stopped) return
     const pending = this.engine.applyIndicator(this.humanSide, phase, value)
+    if (pending) this.applyEmit(pending)
+  }
+
+  confirmServeReady(): void {
+    if (this.stopped) return
+    const pending = this.engine.confirmServeReady(this.humanSide)
     if (pending) this.applyEmit(pending)
   }
 
