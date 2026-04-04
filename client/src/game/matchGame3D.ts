@@ -971,34 +971,32 @@ export class MatchGame3D {
       cz = sw.z + behind
     }
 
-    this.idealCamPos.set(cx, 13.5, cz)
     const lookY = 2.2
+    const alongCourt = this.opts.mySide === 'left' ? -1 : 1
 
-    const opponentServe =
-      !this.opts.spectator &&
-      (s.phase === 'serve_prep' || s.phase === 'serving') &&
-      s.serving !== this.opts.mySide
+    /** Пока в гейме подаёт соперник: весь розыгрыш в фазе `playing` тоже идёт с мячом в полёте — без фиксации камера снова уводит за мячом. */
+    const staticOpponentServiceFraming =
+      !this.opts.spectator && s.serving !== this.opts.mySide && s.phase !== 'over'
 
-    if (opponentServe) {
-      const along = this.opts.mySide === 'left' ? -1 : 1
-      this.idealCamLook.set(sw.x, lookY, sw.z + along * 9)
+    if (staticOpponentServiceFraming) {
+      this.idealCamPos.set(cx, 16, cz)
+      this.idealCamLook.set(sw.x, lookY, sw.z + alongCourt * 9)
+      this.camSmoothPos.copy(this.idealCamPos)
+      this.camSmoothLook.copy(this.idealCamLook)
     } else {
+      this.idealCamPos.set(cx, 13.5, cz)
       const bx = this.ball.position.x
       const bz = this.ball.position.z
       const tx = bx * 0.42 + sw.x * 0.58
       const tz = bz * 0.42 + sw.z * 0.58
       this.idealCamLook.set(tx, lookY, tz)
-    }
 
-    const ac = 1 - Math.exp(-3.4 * dt)
-    if (this.camSmoothPos.distanceTo(this.idealCamPos) > 24) {
-      this.camSmoothPos.copy(this.idealCamPos)
-      this.camSmoothLook.copy(this.idealCamLook)
-    } else {
-      this.camSmoothPos.lerp(this.idealCamPos, ac)
-      if (opponentServe) {
+      const ac = 1 - Math.exp(-3.4 * dt)
+      if (this.camSmoothPos.distanceTo(this.idealCamPos) > 24) {
+        this.camSmoothPos.copy(this.idealCamPos)
         this.camSmoothLook.copy(this.idealCamLook)
       } else {
+        this.camSmoothPos.lerp(this.idealCamPos, ac)
         this.camSmoothLook.lerp(this.idealCamLook, ac)
       }
     }
