@@ -10,9 +10,11 @@
   "dependencies": {
     "firebase": "^12.11.0",
     "phaser": "^3.80.1",
-    "socket.io-client": "^4.7.5"
+    "socket.io-client": "^4.7.5",
+    "three": "^0.170.0"
   },
   "devDependencies": {
+    "@types/three": "^0.170.0",
     "typescript": "^5.4.5",
     "vite": "^5.3.1"
   }

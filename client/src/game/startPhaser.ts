@@ -1,14 +1,16 @@
 import Phaser from 'phaser'
 import type { Socket } from 'socket.io-client'
-import { createMatchGame, type MatchSceneOpts } from './matchScene'
+import { createMatchGame, type MatchGameHandle, type MatchSceneOpts } from './matchScene'
 import type { Side } from './gameTypes'
 
-let current: Phaser.Game | null = null
+let current: Phaser.Game | MatchGameHandle | null = null
 
 export function destroyGame(): void {
-  const sc = current?.scene.getScene('match') as { shutdown?: () => void } | undefined
+  if (!current) return
+  const anyCur = current as MatchGameHandle
+  const sc = anyCur.scene?.getScene?.('match') as { shutdown?: () => void } | undefined
   sc?.shutdown?.()
-  current?.destroy(true)
+  current.destroy(true)
   current = null
 }
 
