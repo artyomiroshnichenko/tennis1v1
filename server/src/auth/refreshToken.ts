@@ -1,6 +1,12 @@
 import { createHash, randomBytes } from 'crypto'
 import type { AuthSubjectType, Prisma } from '@prisma/client'
+import { isDatabaseUnavailableError } from '../lib/prismaErrors'
 import { prisma } from '../lib/prisma'
+import {
+  memoryConsumeRefreshToken,
+  memoryPutRefreshToken,
+  memoryRevokeRefreshForSubject,
+} from './refreshTokenMemory'
 
 function parseRefreshMs(): number {
   const v = process.env.JWT_REFRESH_EXPIRES_IN ?? '30d'
@@ -21,6 +27,15 @@ function parseRefreshMs(): number {
   }
 }
 
+function allowDevMemoryRefresh(): boolean {
+  if (process.env.DISABLE_DEV_MEMORY_REFRESH === '1') return false
+  return process.env.NODE_ENV !== 'production'
+}
+
+function shouldUseMemoryRefreshFallback(e: unknown): boolean {
+  return allowDevMemoryRefresh() && isDatabaseUnavailableError(e)
+}
+
 export async function issueRefreshToken(
   subjectId: string,
   type: AuthSubjectType,
@@ -29,16 +44,32 @@ export async function issueRefreshToken(
   const raw = randomBytes(32).toString('hex')
   const tokenHash = createHash('sha256').update(raw).digest('hex')
   const expiresAt = new Date(Date.now() + parseRefreshMs())
-  await prisma.refreshToken.create({
-    data: {
-      tokenHash,
-      subjectId,
-      type,
-      expiresAt,
-      ...(payload != null ? { payload } : {}),
-    },
-  })
-  return { raw, expiresAt }
+  try {
+    await prisma.refreshToken.create({
+      data: {
+        tokenHash,
+        subjectId,
+        type,
+        expiresAt,
+        ...(payload != null ? { payload } : {}),
+      },
+    })
+    return { raw, expiresAt }
+  } catch (e) {
+    if (shouldUseMemoryRefreshFallback(e)) {
+      console.warn(
+        '[auth] PostgreSQL недоступна — refresh-токены гостя/сессии хранятся в памяти процесса (только не-production). Поднимите БД для постоянных сессий.',
+      )
+      memoryPutRefreshToken(tokenHash, {
+        subjectId,
+        type,
+        payload: (payload ?? null) as Prisma.JsonValue | null,
+        expiresAt,
+      })
+      return { raw, expiresAt }
+    }
+    throw e
+  }
 }
 
 export type ConsumedRefresh = {
@@ -49,17 +80,34 @@ export type ConsumedRefresh = {
 
 export async function consumeRefreshToken(raw: string): Promise<ConsumedRefresh | null> {
   const tokenHash = createHash('sha256').update(raw).digest('hex')
-  const row = await prisma.refreshToken.findUnique({ where: { tokenHash } })
-  if (!row || row.expiresAt < new Date()) {
-    return null
+  try {
+    const row = await prisma.refreshToken.findUnique({ where: { tokenHash } })
+    if (row && row.expiresAt >= new Date()) {
+      await prisma.refreshToken.delete({ where: { id: row.id } })
+      return { subjectId: row.subjectId, type: row.type, payload: row.payload }
+    }
+  } catch (e) {
+    if (shouldUseMemoryRefreshFallback(e)) {
+      const m = memoryConsumeRefreshToken(tokenHash)
+      if (!m) return null
+      return { subjectId: m.subjectId, type: m.type, payload: m.payload }
+    }
+    throw e
   }
-  await prisma.refreshToken.delete({ where: { id: row.id } })
-  return { subjectId: row.subjectId, type: row.type, payload: row.payload }
+
+  const m = memoryConsumeRefreshToken(tokenHash)
+  if (m) return { subjectId: m.subjectId, type: m.type, payload: m.payload }
+  return null
 }
 
 export async function revokeRefreshTokensForSubject(
   subjectId: string,
   type: AuthSubjectType,
 ): Promise<void> {
-  await prisma.refreshToken.deleteMany({ where: { subjectId, type } })
+  memoryRevokeRefreshForSubject(subjectId, type)
+  try {
+    await prisma.refreshToken.deleteMany({ where: { subjectId, type } })
+  } catch (e) {
+    if (!shouldUseMemoryRefreshFallback(e)) throw e
+  }
 }

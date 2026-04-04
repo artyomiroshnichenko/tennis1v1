@@ -1,5 +1,14 @@
 import { Prisma } from '@prisma/client'
 
+/** Ошибки «БД недоступна / схема не готова» — для dev-fallback без PostgreSQL. */
+export function isDatabaseUnavailableError(e: unknown): boolean {
+  if (e instanceof Prisma.PrismaClientInitializationError) return true
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    return ['P1001', 'P1002', 'P1017', 'P2021', 'P2010'].includes(e.code)
+  }
+  return false
+}
+
 /**
  * Maps Prisma connectivity / availability errors to an API-friendly shape.
  * Other errors return null — caller should log and return generic 500.
