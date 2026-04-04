@@ -35,6 +35,19 @@ export const SIDES_CHANGE_MS = 2600
 
 export const TICK_DT = 1 / 60
 
-/** Минимальная скорость мяча после удара (м/с горизонтальная норма). */
-export const BALL_SPEED_MIN = 8
-export const BALL_SPEED_MAX = 38
+/** Субшаги интеграции мяча за один тик: сетка и касание земли внутри корта не «пропускаются». */
+export const BALL_PHYSICS_SUBSTEPS = 8
+
+/**
+ * Горизонтальная норма √(vx²+vy²) в м/с.
+ * Раньше до 38 м/с мяч за доли секунды пересекал границу корта в воздухе — отскок внутри поля не наступал.
+ */
+export const SERVE_HORIZ_SPEED_MIN = 7.5
+export const SERVE_HORIZ_SPEED_MAX = 18.5
+
+export const RALLY_HORIZ_SPEED_MIN = 8
+export const RALLY_HORIZ_SPEED_MAX = 28
+
+/** Совместимость / потолок для rallySpeedCap */
+export const BALL_SPEED_MAX = RALLY_HORIZ_SPEED_MAX
+export const BALL_SPEED_MIN = RALLY_HORIZ_SPEED_MIN

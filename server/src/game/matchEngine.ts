@@ -1,7 +1,6 @@
 import {
+  BALL_PHYSICS_SUBSTEPS,
   BALL_REST_Z,
-  BALL_SPEED_MAX,
-  BALL_SPEED_MIN,
   COURT_L,
   COURT_W,
   GRAVITY,
@@ -12,7 +11,11 @@ import {
   PLAYER_SPEED,
   AIM_DIRECTION_SPAN_RAD,
   POINT_PAUSE_MS,
+  RALLY_HORIZ_SPEED_MAX,
+  RALLY_HORIZ_SPEED_MIN,
   SERVE_AIM_TIMEOUT_MS,
+  SERVE_HORIZ_SPEED_MAX,
+  SERVE_HORIZ_SPEED_MIN,
   SERVE_POWER_TIMEOUT_MS,
   SERVE_READY_TIMEOUT_MS,
   SIDES_CHANGE_MS,
@@ -87,7 +90,7 @@ export class MatchEngine {
   bouncesL = 0
   bouncesR = 0
   serveFaults = 0
-  rallySpeedCap = BALL_SPEED_MAX
+  rallySpeedCap = RALLY_HORIZ_SPEED_MAX
   lastStrongHitBy: Side | null = null
   timeMs = 0
   private serveInPlay = false
@@ -298,16 +301,17 @@ export class MatchEngine {
   }
 
   private fireServe(server: Side, power: number, accuracyRaw: number): void {
-    const speed =
-      BALL_SPEED_MIN + (BALL_SPEED_MAX - BALL_SPEED_MIN) * (0.35 + 0.65 * clamp01(power))
+    const horiz =
+      SERVE_HORIZ_SPEED_MIN +
+      (SERVE_HORIZ_SPEED_MAX - SERVE_HORIZ_SPEED_MIN) * (0.35 + 0.65 * clamp01(power))
     const ang = (accuracyRaw - 0.5) * AIM_DIRECTION_SPAN_RAD
     const toward = server === 'left' ? -1 : 1
     const sdx = Math.sin(ang)
     const sdy = Math.cos(ang) * toward
     const d = norm(sdx, sdy)
-    this.ball.vx = d.x * speed
-    this.ball.vy = d.y * speed
-    this.ball.vz = 4.2 + 3.5 * clamp01(power)
+    this.ball.vx = d.x * horiz
+    this.ball.vy = d.y * horiz
+    this.ball.vz = 4.0 + 4.2 * clamp01(power)
     this.lastHit = server
     this.serveInPlay = true
     this.setPlayerState(server, 'idle')
@@ -316,7 +320,8 @@ export class MatchEngine {
 
   private fireGroundstroke(side: Side, dirT: number, power: number): void {
     const speedBase =
-      BALL_SPEED_MIN + (BALL_SPEED_MAX - BALL_SPEED_MIN) * (0.25 + 0.75 * clamp01(power))
+      RALLY_HORIZ_SPEED_MIN +
+      (RALLY_HORIZ_SPEED_MAX - RALLY_HORIZ_SPEED_MIN) * (0.25 + 0.75 * clamp01(power))
     let cap = this.rallySpeedCap
     if (this.lastStrongHitBy && this.lastStrongHitBy !== side) {
       const prevStrong = this.lastStrongHitBy === 'left' ? this.pl : this.pr
@@ -330,9 +335,9 @@ export class MatchEngine {
     let speed = speedBase
     if (this.lastStrongHitBy === other(side) && power > 0.82) {
       speed = Math.min(cap + 2.5, speed + 4)
-      this.rallySpeedCap = Math.min(BALL_SPEED_MAX, this.rallySpeedCap + 0.8)
+      this.rallySpeedCap = Math.min(RALLY_HORIZ_SPEED_MAX, this.rallySpeedCap + 0.8)
     } else {
-      this.rallySpeedCap = BALL_SPEED_MAX
+      this.rallySpeedCap = RALLY_HORIZ_SPEED_MAX
     }
     if (power > 0.88) this.lastStrongHitBy = side
     else this.lastStrongHitBy = null
@@ -484,22 +489,31 @@ export class MatchEngine {
   }
 
   private integrateBall(dt: number): PendingEmit | null {
+    const h = dt / BALL_PHYSICS_SUBSTEPS
+    for (let i = 0; i < BALL_PHYSICS_SUBSTEPS; i++) {
+      const ev = this.integrateBallSubstep(h)
+      if (ev) return ev
+    }
+    return null
+  }
+
+  private integrateBallSubstep(h: number): PendingEmit | null {
     const py = this.ball.y
     const pz = this.ball.z
     const pvy = this.ball.vy
     const pvz = this.ball.vz
 
-    this.ball.vz -= GRAVITY * dt
-    this.ball.x += this.ball.vx * dt
-    this.ball.y += this.ball.vy * dt
-    this.ball.z += this.ball.vz * dt
+    this.ball.vz -= GRAVITY * h
+    this.ball.x += this.ball.vx * h
+    this.ball.y += this.ball.vy * h
+    this.ball.z += this.ball.vz * h
 
     if (this.crossedNet(py, this.ball.y)) {
       const dy = this.ball.y - py
       let zCross = pz
       if (Math.abs(dy) > 1e-8 && Math.abs(pvy) > 1e-8) {
         const t0 = (NET_Y - py) / pvy
-        if (t0 > 0 && t0 <= dt) {
+        if (t0 > 0 && t0 <= h) {
           zCross = pz + pvz * t0
         }
       }
@@ -600,7 +614,7 @@ export class MatchEngine {
     this.serveInPlay = false
     this.freezePlayersNoIntegrate()
     this.lastStrongHitBy = null
-    this.rallySpeedCap = BALL_SPEED_MAX
+    this.rallySpeedCap = RALLY_HORIZ_SPEED_MAX
     if (res.matchOver) {
       this.phase = { k: 'done', winner: winner }
       out.push({ over: { winner, reason: 'Матч' } })
