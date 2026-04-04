@@ -13,6 +13,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 RUN apk add --no-cache openssl
+# prisma в dependencies: в образе есть CLI той же мажорной версии, что и @prisma/client
+# (иначе `npx prisma` без локального пакета тянет Prisma 7 → P1012 на текущей schema.prisma).
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist

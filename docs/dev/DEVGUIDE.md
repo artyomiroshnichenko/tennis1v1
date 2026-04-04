@@ -434,8 +434,9 @@ cd client && npm ci && npm run build && cd ..
 # Запустить все сервисы
 docker compose -f docker-compose.prod.yml up -d
 
-# Применить миграции БД
+# Применить миграции БД (используется Prisma из node_modules образа — см. package.json)
 docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
+# Либо: exec server npm run db:migrate
 
 # Проверить что всё запущено
 docker compose -f docker-compose.prod.yml ps
