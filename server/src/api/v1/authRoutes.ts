@@ -7,6 +7,7 @@ import { consumeRefreshToken, issueRefreshToken, revokeRefreshTokensForSubject }
 import { createGuestSession, createUserSession } from '../../auth/session'
 import { sendApiError } from '../../lib/httpError'
 import { prisma } from '../../lib/prisma'
+import { prismaToApiError } from '../../lib/prismaErrors'
 import type { AuthedRequest } from '../../middleware/auth'
 import { requireAccessToken } from '../../middleware/auth'
 
@@ -26,6 +27,15 @@ authRouter.post('/guest', async (req, res) => {
       sendApiError(res, 400, 'VALIDATION_ERROR', e.message)
       return
     }
+    const dbErr = prismaToApiError(e)
+    if (dbErr) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[POST /auth/guest] database error', e)
+      }
+      sendApiError(res, dbErr.status, dbErr.code, dbErr.message)
+      return
+    }
+    console.error('[POST /auth/guest]', e)
     sendApiError(res, 500, 'INTERNAL_ERROR', 'Внутренняя ошибка сервера')
   }
 })

@@ -3,6 +3,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 import { apiV1Router } from './api/v1'
+import { prisma } from './lib/prisma'
 import { registerLobbySocket } from './socket/lobbySocket'
 
 const app = express()
@@ -24,6 +25,22 @@ app.use('/api/v1', apiV1Router)
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' })
+})
+
+/** Готовность: процесс + подключение к БД (для локальной диагностики). */
+app.get('/health/ready', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`
+    res.json({ status: 'ok', database: 'up' })
+  } catch (e) {
+    console.error('[GET /health/ready]', e)
+    res.status(503).json({
+      status: 'error',
+      code: 'DATABASE_UNAVAILABLE',
+      error:
+        'База данных недоступна. Запустите PostgreSQL и примените миграции (см. docs/dev/DEVGUIDE.md).',
+    })
+  }
 })
 
 registerLobbySocket(io)

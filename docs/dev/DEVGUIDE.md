@@ -199,8 +199,22 @@ npm run dev
 |---|---|---|
 | Клиент (игра) | http://localhost:5173 | Phaser + Vite dev server |
 | Сервер (API) | http://localhost:3000 | Express + Socket.io |
+| Готовность БД | http://localhost:3000/health/ready | Должен вернуть `200` и `database: up`; при `503` — см. раздел «Если не сохраняется никнейм» |
 | PostgreSQL | localhost:5432 | Только для подключений (не браузер) |
 | Prisma Studio | http://localhost:5555 | Запускается отдельно: `npx prisma studio` |
+
+---
+
+### Если при сохранении никнейма «внутренняя ошибка» или не стартует игра
+
+Гостевая сессия (`POST /auth/guest`) пишет refresh-токен в **PostgreSQL**. Без доступной БД сервер отвечает ошибкой (теперь с кодом **`DATABASE_UNAVAILABLE`** и пояснением в тексте).
+
+1. **Docker:** `docker compose -f docker-compose.dev.yml ps` — контейнер `postgres` в статусе Up. Если нет: `docker compose -f docker-compose.dev.yml up -d`.
+2. **`server/.env`:** есть файл (скопировать из `server/.env.example`), заполнены **`DATABASE_URL`** (как в примере для локального postgres) и **`JWT_SECRET`**.
+3. **Миграции:** из каталога `server/` выполнить `npx prisma migrate deploy` (или `migrate dev` при разработке).
+4. **Проверка:** в браузере открыть http://localhost:3000/health/ready — ожидается JSON с `"database": "up"`.
+
+Если клиент открыт с одной машины, а сервер запущен в другом окружении (только Windows vs только WSL), убедитесь, что и Vite, и Node смотрят на один и тот же `localhost:3000` и что порт 5432 с хоста доступен процессу сервера.
 
 ---
 
