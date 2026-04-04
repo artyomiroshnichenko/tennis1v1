@@ -197,7 +197,7 @@ npm run dev
 
 | Сервис | URL | Описание |
 |---|---|---|
-| Клиент (игра) | http://localhost:5173 | Phaser + Vite dev server |
+| Клиент (игра) | http://localhost:5173 | Three.js (матч) + Vite dev server |
 | Сервер (API) | http://localhost:3000 | Express + Socket.io |
 | Готовность БД | http://localhost:3000/health/ready | Должен вернуть `200` и `database: up`; при `503` — см. раздел «Если не сохраняется никнейм» |
 | PostgreSQL | localhost:5432 | Только для подключений (не браузер) |
@@ -212,9 +212,12 @@ npm run dev
 Сервер подхватывает **`server/.env` по пути к файлу**, а не только из текущего каталога: можно запускать `npm run dev` из **`server/`** или из **корня репозитория** — `DATABASE_URL` будет найден. После обновления кода перезапустите процесс `npm run dev`.
 
 1. **Docker:** `docker compose -f docker-compose.dev.yml ps` — контейнер `postgres` в статусе Up. Если нет: `docker compose -f docker-compose.dev.yml up -d`.
-2. **`server/.env`:** есть файл (скопировать из `server/.env.example`), заполнены **`DATABASE_URL`** (как в примере для локального postgres) и **`JWT_SECRET`**.
+2. **`server/.env`:** есть файл (скопировать из `server/.env.example`), заполнен **`DATABASE_URL`**. **`JWT_SECRET`** обязателен в production; в development при отсутствии подставляется временный ключ (в логах сервера будет предупреждение).
 3. **Миграции:** из каталога `server/` после `npm ci` или `npm install` выполнить **`npm run db:migrate`** (прод) или **`npm run db:migrate:dev`** (разработка). Не вызывайте **`npx prisma …`** без установленных зависимостей — npx может скачать **Prisma 7** и дать **P1012** на текущей схеме.
 4. **Проверка:** в браузере открыть http://localhost:3000/health/ready — ожидается JSON с `"database": "up"`.
+5. Коды ответа API: **`DATABASE_SCHEMA`** (503) — не применены миграции; **`DATABASE_UNAVAILABLE`** (503) — Postgres не достучаться.
+
+Целевой визуал и геймплей-эпики в духе аркадного тенниса: см. **`docs/dev/tennis-open-style-target.md`**.
 
 Если клиент открыт с одной машины, а сервер запущен в другом окружении (только Windows vs только WSL), убедитесь, что и Vite, и Node смотрят на один и тот же `localhost:3000` и что порт 5432 с хоста доступен процессу сервера.
 

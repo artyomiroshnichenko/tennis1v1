@@ -35,6 +35,16 @@ authRouter.post('/guest', async (req, res) => {
       sendApiError(res, dbErr.status, dbErr.code, dbErr.message)
       return
     }
+    const msg = e instanceof Error ? e.message : String(e)
+    if (msg.includes('JWT_SECRET')) {
+      sendApiError(
+        res,
+        503,
+        'CONFIG_ERROR',
+        'На сервере не задан JWT_SECRET. Скопируйте server/.env.example в server/.env и задайте секрет.',
+      )
+      return
+    }
     console.error('[POST /auth/guest]', e)
     sendApiError(res, 500, 'INTERNAL_ERROR', 'Внутренняя ошибка сервера')
   }

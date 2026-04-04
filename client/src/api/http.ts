@@ -21,7 +21,20 @@ export async function apiJson<T>(
     return undefined as T
   }
   const text = await res.text()
-  const data = text ? (JSON.parse(text) as unknown) : null
+  let data: unknown = null
+  if (text) {
+    try {
+      data = JSON.parse(text) as unknown
+    } catch {
+      const err = new Error(
+        res.status === 502 || res.status === 503
+          ? 'Сервер недоступен или перезагружается. Запустите backend (порт 3000) и PostgreSQL.'
+          : res.statusText || `Ошибка сервера (${res.status})`,
+      ) as ApiErr
+      err.status = res.status
+      throw err
+    }
+  }
   if (!res.ok) {
     const body = data as { error?: string; code?: string }
     const err = new Error(body?.error ?? res.statusText) as ApiErr

@@ -22,6 +22,15 @@ export function prismaToApiError(e: unknown): { status: number; code: string; me
           'Не удаётся подключиться к базе данных. Убедитесь, что PostgreSQL запущен, DATABASE_URL в server/.env совпадает с контейнером и миграции применены (cd server && npm ci && npm run db:migrate).',
       }
     }
+    // Таблицы отсутствуют / схема не применена
+    if (['P2021', 'P2010'].includes(e.code)) {
+      return {
+        status: 503,
+        code: 'DATABASE_SCHEMA',
+        message:
+          'Схема базы не готова. Из каталога server выполните: npm run db:migrate (нужен запущенный PostgreSQL, см. docker-compose.dev.yml).',
+      }
+    }
   }
   return null
 }
