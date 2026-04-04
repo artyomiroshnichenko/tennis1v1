@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { Socket } from 'socket.io-client'
 import {
   ALLEY_W,
+  BASELINE_STAND_INSET_M,
   COURT_L,
   COURT_W_DOUBLE,
   COURT_W_SINGLE,
@@ -406,6 +407,7 @@ export class MatchGame3D {
       if (o instanceof THREE.Mesh) o.castShadow = true
     })
     this.courtRoot.add(this.plLeft, this.plRight)
+    this.placeDefaultPlayersOnBaselines()
 
     const ballMat = new THREE.MeshStandardMaterial({
       color: 0xfff59d,
@@ -460,8 +462,22 @@ export class MatchGame3D {
     this.courtRoot.add(this.ballVelHelper)
   }
 
+  /** Пока нет `game:state`, (0,0,0) на корте — это линия сетки; держим фигуры на базовых. */
+  private placeDefaultPlayersOnBaselines(): void {
+    const xN = 0.5
+    const yLeftN = (COURT_L - BASELINE_STAND_INSET_M) / COURT_L
+    const yRightN = BASELINE_STAND_INSET_M / COURT_L
+    const l = normToMeters(xN, yLeftN)
+    const r = normToMeters(xN, yRightN)
+    const lw = courtToWorld(l.xM, l.yM)
+    const rw = courtToWorld(r.xM, r.yM)
+    this.plLeft.position.set(lw.x, 0, lw.z)
+    this.plRight.position.set(rw.x, 0, rw.z)
+  }
+
   private bindSocket(): void {
     const sock = this.opts.socket
+    sock.on('game:start', this.onGameStart)
     sock.on('game:state', this.onState)
     sock.on('game:indicator:show', this.onIndicator)
     sock.on('game:point', this.onPoint)
@@ -480,6 +496,10 @@ export class MatchGame3D {
       }
       document.addEventListener('visibilitychange', this.visibilityListener)
     }
+  }
+
+  private readonly onGameStart = (p?: { initialState?: GameStateWire }): void => {
+    if (p?.initialState) this.lastState = p.initialState
   }
 
   private readonly onState = (s: GameStateWire): void => {
@@ -986,7 +1006,8 @@ export class MatchGame3D {
       dy /= l
     }
     const s = this.lastState
-    if (this.pointerTarget && s && (s.phase === 'playing' || s.phase === 'serving')) {
+    /** В фазе подачи/прицела сервер игроков не двигает — не тянем курсором к сетке (ввод всё равно игнорируется). */
+    if (this.pointerTarget && s && s.phase === 'playing') {
       const self = this.opts.mySide === 'left' ? s.players.left : s.players.right
       const xM = self.x * COURT_W_SINGLE
       const yM = self.y * COURT_L
@@ -1173,6 +1194,7 @@ export class MatchGame3D {
       this.visibilityListener = undefined
     }
     const sock = this.opts.socket
+    sock.off('game:start', this.onGameStart)
     sock.off('game:state', this.onState)
     sock.off('game:indicator:show', this.onIndicator)
     sock.off('game:point', this.onPoint)

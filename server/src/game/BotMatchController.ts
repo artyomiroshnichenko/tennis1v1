@@ -39,8 +39,10 @@ export class BotMatchController {
     const firstServer: Side = Math.random() < 0.5 ? 'left' : 'right'
     this.engine = new MatchEngine(firstServer)
 
-    this.toPlayer('bot:started', { initialState: this.engine.getWireState(), botName: this.botName })
-    this.toPlayer('game:start', { initialState: this.engine.getWireState(), botName: this.botName })
+    const initial = this.engine.getWireState()
+    this.toPlayer('bot:started', { initialState: initial, botName: this.botName })
+    this.toPlayer('game:start', { initialState: initial, botName: this.botName })
+    this.toPlayer('game:state', initial)
     const srv = currentServer(this.engine.score)
     this.toPlayer('game:serve:prompt', { side: srv })
     const need = this.engine.getIndicatorNeed()

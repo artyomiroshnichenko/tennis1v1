@@ -8,3 +8,6 @@ export const ALLEY_W = (COURT_W_DOUBLE - COURT_W_SINGLE) / 2
 
 export const NET_Y = COURT_L / 2
 export const SERVICE_DEPTH = 6.4
+
+/** Как `geometry.baselinePosition` на сервере — стойка на базовой, не на линии сетки. */
+export const BASELINE_STAND_INSET_M = 1.1

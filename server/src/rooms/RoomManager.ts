@@ -409,6 +409,7 @@ export class RoomManager {
     if (room.phase === 'playing' && m) {
       const initialState = m.getWireState()
       this.io.to(socketId).emit('game:start', { initialState })
+      this.io.to(socketId).emit('game:state', initialState)
     }
 
     return room
@@ -453,6 +454,7 @@ export class RoomManager {
     if (room.phase === 'playing' && m) {
       const initialState = m.getWireState()
       this.io.to(socketId).emit('game:start', { initialState })
+      this.io.to(socketId).emit('game:state', initialState)
     }
 
     return room

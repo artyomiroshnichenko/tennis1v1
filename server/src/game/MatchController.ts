@@ -49,6 +49,8 @@ export class MatchController {
     const roomName = `room:${this.roomId}`
     const initial: GameStateWire = this.engine.getWireState()
     this.io.to(roomName).emit('game:start', { initialState: initial })
+    /** Сразу полное состояние — клиент рисует базовые линии до первого тика цикла. */
+    this.io.to(roomName).emit('game:state', initial)
     const srv = currentServer(this.engine.score)
     this.io.to(roomName).emit('game:serve:prompt', { side: srv })
 
