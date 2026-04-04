@@ -1,5 +1,25 @@
 # BACKLOG — отложенные технические задачи
 
+## ENG-PRISMA7-CLI-DATASOURCE — Prisma 7: `url` в schema и глобальный CLI
+
+### Контекст
+
+При запуске **глобального** `prisma` (например **Prisma CLI 7.6.0**) против репозитория с `schema.prisma` под **Prisma 5** появляется **P1012**: свойство `url` в `datasource` больше не поддерживается — перенос URL в `prisma.config.ts`, и т.д. (см. [документацию Prisma 7](https://www.prisma.io/docs)).
+
+В проекте в **`server/package.json`** зафиксированы **`prisma` и `@prisma/client` ^5.14.0** — `url = env("DATABASE_URL")` в `schema.prisma` для этой версии **корректен**.
+
+### Задачи
+
+- В CI и у разработчиков: для миграций и `prisma generate` использовать **локальный** CLI из проекта: `cd server && npx prisma …` (без глобальной установки Prisma 7 поверх репо).
+- Либо спланировать отдельный эпик **миграции на Prisma 7** (новый конфиг, адаптер/accelerate, регрессия API).
+
+### Критерий готовности
+
+- [x] В `DEVGUIDE.md` явно указано: версия Prisma из `package.json`, команда `npx prisma` из каталога `server/`, предупреждение про глобальный Prisma 7 и P1012.
+- Либо репозиторий переведён на Prisma 7 с рабочими миграциями и документацией.
+
+---
+
 ## ENG-PROD-HTTPS — публичный доступ engbotai.ru (редиректы / HTTPS / Jino)
 
 ### Договорённость

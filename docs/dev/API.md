@@ -37,12 +37,14 @@
 
 #### Администратор
 
+Все пути ниже требуют JWT зарегистрированного пользователя с ролью `ADMIN` в БД. Ответ **403** при отсутствии роли.
+
 | Метод | Путь | Описание |
 |---|---|---|
-| GET | `/admin/stats` | Статистика за день / неделю / всё время |
-| GET | `/admin/matches` | Журнал матчей с фильтром по дате |
-| GET | `/admin/players` | Список игроков со статистикой |
-| GET | `/admin/active` | Активные матчи и игроки онлайн |
+| GET | `/admin/stats` | `{ day, week, all }` — в каждом ключе `{ total, online, bot }` (завершённые матчи с `finishedAt`, по UTC-суткам для `day`, скользящие 7 суток для `week`) |
+| GET | `/admin/active` | `{ activeMatches, onlineConnections, botSessions, items }` — `items`: активные онлайн-матчи `{ code, roomId, players: { nickname, side }[] }` |
+| GET | `/admin/matches?from=&to=` | Журнал до 500 завершённых матчей; `from` / `to` — ISO-время, фильтр по `finishedAt` |
+| GET | `/admin/players` | Список пользователей с полями `matches`, `wins`, `losses`, `winRatePercent` |
 
 ---
 
@@ -81,6 +83,7 @@ socket.emit('error', { code: string, message: string })
 | `NOT_YOUR_TURN` | Попытка подать/ударить не в свою очередь |
 | `INVALID_PHASE` | Действие недопустимо в текущей фазе игры |
 | `RATE_LIMITED` | Слишком частая отправка сообщений в чат |
+| `FORBIDDEN` | Нет прав (в т.ч. `spectator:join` с `asAdmin` без роли admin) |
 
 ---
 
@@ -100,7 +103,7 @@ socket.emit('error', { code: string, message: string })
 | `game:input:indicator` | `{ phase: 'direction' \| 'power', value: number }` | Нажатие индикатора удара — фаза и позиция (0–1) |
 | `chat:message` | `{ text }` | Сообщение в чат комнаты: лобби (ожидание/отсчёт) и во время матча или на экране результата — всем в комнате, включая наблюдателей |
 | `chat:reaction` | `{ type: 'heart' \| 'fire' \| 'cry' \| 'halo' \| 'angry' }` | Отправить реакцию |
-| `spectator:join` | `{ code }` | Подключиться как наблюдатель (во время матча или на экране результата) |
+| `spectator:join` | `{ code, asAdmin?: boolean }` | Наблюдатель; `asAdmin: true` — вне лимита двух зрителей, без рассылки `spectator:count` при входе; только для JWT с ролью `ADMIN` |
 
 #### Server → Client
 
@@ -178,4 +181,4 @@ type PlayerState = 'idle' | 'running' | 'hitting' | 'serving'
 - [ ] Все Socket.io события реализованы согласно спецификации
 - [ ] Ошибки WebSocket отправляются через событие `error` в формате `{ code, message }`
 - [ ] Типы GameState, Score, PlayerState используются на клиенте и сервере
-- [ ] Admin эндпоинты защищены проверкой роли admin
+- [x] Admin эндпоинты защищены проверкой роли admin

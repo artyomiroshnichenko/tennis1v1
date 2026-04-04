@@ -61,6 +61,35 @@ export class RoomManager {
     this.io = io
   }
 
+  private nonAdminSpectatorCount(room: ManagedRoom): number {
+    return room.spectators.filter((s) => !s.isAdmin).length
+  }
+
+  private emitPublicSpectatorCount(room: ManagedRoom): void {
+    this.io.to(`room:${room.id}`).emit('spectator:count', { count: this.nonAdminSpectatorCount(room) })
+  }
+
+  getSocketConnectionsCount(): number {
+    return this.io.sockets.sockets.size
+  }
+
+  getActivePlayingMatches(): Array<{
+    code: string
+    roomId: string
+    players: RoomJoinedPlayer[]
+  }> {
+    const out: Array<{ code: string; roomId: string; players: RoomJoinedPlayer[] }> = []
+    for (const room of this.roomsById.values()) {
+      if (room.phase !== 'playing' || !room.match) continue
+      out.push({
+        code: room.code,
+        roomId: room.id,
+        players: this.buildPlayersPayload(room),
+      })
+    }
+    return out
+  }
+
   getRoomBySocket(socketId: string): ManagedRoom | undefined {
     const playerRoom = this.socketToRoomId.get(socketId)
     if (playerRoom) return this.roomsById.get(playerRoom)
@@ -248,7 +277,7 @@ export class RoomManager {
         this.emitRematchState(r)
       },
     })
-    this.io.to(`room:${r.id}`).emit('spectator:count', { count: r.spectators.length })
+    this.emitPublicSpectatorCount(r)
   }
 
   createRoom(
@@ -354,7 +383,7 @@ export class RoomManager {
         message: 'Матч ещё не начался. Ожидайте начала.',
       }
     }
-    if (room.spectators.length >= MAX_SPECTATORS) {
+    if (this.nonAdminSpectatorCount(room) >= MAX_SPECTATORS) {
       return { error: 'SPECTATORS_FULL', message: 'Наблюдателей не больше двух' }
     }
     if (room.players.some((p) => p.socketId === socketId)) {
@@ -374,7 +403,51 @@ export class RoomManager {
       phase: room.phase,
       matchChat: [...room.matchChat],
     })
-    this.io.to(`room:${room.id}`).emit('spectator:count', { count: room.spectators.length })
+    this.emitPublicSpectatorCount(room)
+
+    const m = room.match
+    if (room.phase === 'playing' && m) {
+      const initialState = m.getWireState()
+      this.io.to(socketId).emit('game:start', { initialState })
+    }
+
+    return room
+  }
+
+  joinAsAdminSpectator(
+    socketId: string,
+    codeRaw: string,
+    nickname: string,
+    subjectId: string,
+  ): ManagedRoom | { error: string; message: string } {
+    const code = codeRaw.trim().toUpperCase()
+    const room = this.roomsByCode.get(code)
+    if (!room) {
+      return { error: 'ROOM_NOT_FOUND', message: 'Комната не найдена' }
+    }
+    if (room.phase !== 'playing' && room.phase !== 'result') {
+      return {
+        error: 'INVALID_PHASE',
+        message: 'Матч ещё не начался. Ожидайте начала.',
+      }
+    }
+    if (room.players.some((p) => p.socketId === socketId)) {
+      return { error: 'INVALID_PHASE', message: 'Вы уже в комнате как игрок' }
+    }
+    if (room.spectators.some((s) => s.socketId === socketId)) {
+      return { error: 'INVALID_PHASE', message: 'Вы уже наблюдаете' }
+    }
+
+    const spec: RoomSpectator = { socketId, nickname, subjectId, isAdmin: true }
+    room.spectators.push(spec)
+    this.spectatorToRoomId.set(socketId, room.id)
+    this.attachSocketToRoom(socketId, room.id)
+
+    this.io.to(socketId).emit('spectator:joined', {
+      players: this.buildPlayersPayload(room),
+      phase: room.phase,
+      matchChat: [...room.matchChat],
+    })
 
     const m = room.match
     if (room.phase === 'playing' && m) {
@@ -394,7 +467,7 @@ export class RoomManager {
     room.spectators = room.spectators.filter((s) => s.socketId !== socketId)
     const sock = this.io.sockets.sockets.get(socketId)
     sock?.leave(`room:${room.id}`)
-    this.io.to(`room:${room.id}`).emit('spectator:count', { count: room.spectators.length })
+    this.emitPublicSpectatorCount(room)
   }
 
   handleRematch(socketId: string): void {

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express'
-import type { User } from '@prisma/client'
+import { Role, type User } from '@prisma/client'
 import { verifyAccessToken, type AccessClaims } from '../auth/jwt'
 import { sendApiError } from '../lib/httpError'
 import { prisma } from '../lib/prisma'
@@ -46,6 +46,24 @@ export async function requireRegisteredUser(
   const user = await prisma.user.findUnique({ where: { id: req.auth.sub } })
   if (!user) {
     sendApiError(res, 401, 'UNAUTHORIZED', 'Пользователь не найден')
+    return
+  }
+  req.dbUser = user
+  next()
+}
+
+export async function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction): Promise<void> {
+  if (!req.auth) {
+    sendApiError(res, 401, 'UNAUTHORIZED', 'Требуется авторизация')
+    return
+  }
+  if (req.auth.typ !== 'user') {
+    sendApiError(res, 403, 'FORBIDDEN', 'Доступно только администратору')
+    return
+  }
+  const user = await prisma.user.findUnique({ where: { id: req.auth.sub } })
+  if (!user || user.role !== Role.ADMIN) {
+    sendApiError(res, 403, 'FORBIDDEN', 'Нет прав администратора')
     return
   }
   req.dbUser = user

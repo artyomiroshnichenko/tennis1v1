@@ -656,8 +656,8 @@ export async function openLobbyJoin(hooks: LobbyHooks & { code: string }): Promi
   })
 }
 
-/** Наблюдатель: `?room=CODE&watch=1` */
-export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): Promise<void> {
+/** Наблюдатель: `?room=CODE&watch=1` (админ: `asAdmin` + `?adm=1`) */
+export async function openSpectatorJoin(hooks: LobbyHooks & { code: string; asAdmin?: boolean }): Promise<void> {
   const token = localStorage.getItem(LS_ACCESS)
   if (!token) throw new Error('Нет сессии')
 
@@ -684,6 +684,7 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
   const clearWatchParam = (): void => {
     const u = new URL(window.location.href)
     u.searchParams.delete('watch')
+    u.searchParams.delete('adm')
     window.history.replaceState({}, '', u.pathname + (u.search ? u.search : '') + u.hash)
   }
 
@@ -882,7 +883,10 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
       wp.textContent = msg
       gameRoot.style.display = 'block'
       if (!joinRetryTimer) {
-        joinRetryTimer = setInterval(() => sock.emit('spectator:join', { code }), 4000)
+        joinRetryTimer = setInterval(
+          () => sock.emit('spectator:join', hooks.asAdmin ? { code, asAdmin: true } : { code }),
+          4000,
+        )
       }
       return
     }
@@ -895,7 +899,7 @@ export async function openSpectatorJoin(hooks: LobbyHooks & { code: string }): P
   })
 
   whenConnected(sock, () => {
-    sock.emit('spectator:join', { code })
+    sock.emit('spectator:join', hooks.asAdmin ? { code, asAdmin: true } : { code })
   })
 }
 

@@ -560,6 +560,10 @@ model MatchPlayer {
 }
 ```
 
+### Версия Prisma и CLI
+
+Команды выполнять **из каталога `server/`**: `cd server && npx prisma …`. Версия `prisma` и `@prisma/client` зафиксирована в **`server/package.json`**. Глобальный **Prisma 7** против схемы этого репозитория даёт **P1012** — не использовать глобальный CLI для этого проекта; подробности в **`docs/dev/BACKLOG.md`** (ENG-PRISMA7-CLI-DATASOURCE).
+
 ### Миграции
 
 ```bash

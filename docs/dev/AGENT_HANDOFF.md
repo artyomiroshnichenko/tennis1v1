@@ -102,11 +102,16 @@
 - Сервер: пауза **3 мин** при обрыве сокета в матче, слот игрока `socketId: null`, `room:rejoin` + `game:resync`, отсчёт **10 с** после возврата (`resume_countdown`), аннуляция фазы удара `abortStrikeIfPending`, двойное поражение `DOUBLE_DEFEAT` в Prisma; `room:leave` — немедленный форфейт.
 - Клиент: `deadlineTs` на паузе, `sessionStorage` + `reconnect` → `room:rejoin`, тексты «Техническая победа» / двойной исход.
 
-## Следующий логичный шаг: эпик 09 и далее по PRD
+### Эпик 09 — панель администратора (закрыт по чеклисту в `docs/business/epic-09-admin.md`)
 
-Эпики **06–08** закрыты по бизнес-чеклистам. Протокол — **`docs/dev/API.md`**.
+- Сервер: `requireAdmin` в `server/src/middleware/auth.ts`; REST `/api/v1/admin/*` — `adminRoutes.ts` (stats, active, matches, players); `roomManagerHolder` + `lobbySocket` (`setRoomManagerInstance`, `setBotSessionsCounter`); `spectator:join` с `asAdmin` и проверкой роли в БД; `RoomManager.joinAsAdminSpectator` (без лишнего `spectator:count` при входе).
+- Клиент: блок «Панель администратора» на главной для `role === ADMIN`, `client/src/app/adminScreen.ts`, наблюдение с `asAdmin` и `?room=&watch=1&adm=1`.
 
-Зависимости: эпик **09** — по PRD; эпики **01–08** закрыты в `main`.
+## Следующий логичный шаг: далее по PRD
+
+Эпики **06–09** закрыты по бизнес-чеклистам. Протокол — **`docs/dev/API.md`**.
+
+Зависимости: следующий эпик — по **`docs/business/PRD.md`**; эпики **01–09** в `main`.
 
 ---
 
@@ -144,4 +149,4 @@ cd client && npm install && npm run dev
 
 Краткая формулировка для старта чата:
 
-> Продолжи Tennis 1v1 со следующего эпика по PRD. Прочитай `docs/dev/AGENT_HANDOFF.md` и соответствующий `docs/business/epic-NN-*.md`. В `main` уже эпики 01–08.
+> Продолжи Tennis 1v1 со следующего эпика по PRD. Прочитай `docs/dev/AGENT_HANDOFF.md` и соответствующий `docs/business/epic-NN-*.md`. В `main` уже эпики 01–09.

@@ -23,6 +23,8 @@ export type RoomSpectator = {
   socketId: string
   nickname: string
   subjectId: string
+  /** Не учитывается в лимите 2 зрителя; без рассылки spectator:count при входе */
+  isAdmin?: boolean
 }
 
 export type ManagedRoom = {

@@ -1,8 +1,11 @@
 import type { Server, Socket } from 'socket.io'
+import { Role } from '@prisma/client'
 import { verifyAccessToken, type AccessClaims } from '../auth/jwt'
 import { NicknameValidationError, validateNickname } from '../auth/nickname'
 import { BotMatchController } from '../game/BotMatchController'
 import { pickBotName, type BotDifficulty } from '../game/botNames'
+import { prisma } from '../lib/prisma'
+import { setBotSessionsCounter, setRoomManagerInstance } from '../realtime/roomManagerHolder'
 import { RoomManager } from '../rooms/RoomManager'
 
 function socketError(socket: Socket, code: string, message: string): void {
@@ -23,7 +26,9 @@ function readNickname(_socket: Socket, raw: unknown): string {
 
 export function registerLobbySocket(io: Server): void {
   const rooms = new RoomManager(io)
+  setRoomManagerInstance(rooms)
   const botBySocket = new Map<string, BotMatchController>()
+  setBotSessionsCounter(() => botBySocket.size)
 
   function stopBotSession(socketId: string): void {
     botBySocket.get(socketId)?.stop()
@@ -211,25 +216,43 @@ export function registerLobbySocket(io: Server): void {
       }
     })
 
-    socket.on('spectator:join', (payload: { code?: string }) => {
-      try {
-        const code = payload?.code
-        if (typeof code !== 'string' || !code.trim()) {
-          socketError(socket, 'VALIDATION_ERROR', 'Укажите код комнаты')
-          return
+    socket.on('spectator:join', (payload: { code?: string; asAdmin?: boolean }) => {
+      void (async () => {
+        try {
+          const code = payload?.code
+          if (typeof code !== 'string' || !code.trim()) {
+            socketError(socket, 'VALIDATION_ERROR', 'Укажите код комнаты')
+            return
+          }
+          const nickname = readNickname(socket, undefined)
+          if (payload?.asAdmin) {
+            if (auth.typ !== 'user') {
+              socketError(socket, 'FORBIDDEN', 'Только для зарегистрированного администратора')
+              return
+            }
+            const user = await prisma.user.findUnique({ where: { id: auth.sub } })
+            if (!user || user.role !== Role.ADMIN) {
+              socketError(socket, 'FORBIDDEN', 'Нет прав администратора')
+              return
+            }
+            const joined = rooms.joinAsAdminSpectator(socket.id, code, nickname, auth.sub)
+            if ('error' in joined) {
+              socketError(socket, joined.error, joined.message)
+            }
+            return
+          }
+          const joined = rooms.joinAsSpectator(socket.id, code, nickname, auth.sub)
+          if ('error' in joined) {
+            socketError(socket, joined.error, joined.message)
+          }
+        } catch (e) {
+          if (e instanceof NicknameValidationError) {
+            socketError(socket, 'VALIDATION_ERROR', e.message)
+            return
+          }
+          socketError(socket, 'INTERNAL_ERROR', 'Не удалось подключиться как наблюдатель')
         }
-        const nickname = readNickname(socket, undefined)
-        const joined = rooms.joinAsSpectator(socket.id, code, nickname, auth.sub)
-        if ('error' in joined) {
-          socketError(socket, joined.error, joined.message)
-        }
-      } catch (e) {
-        if (e instanceof NicknameValidationError) {
-          socketError(socket, 'VALIDATION_ERROR', e.message)
-          return
-        }
-        socketError(socket, 'INTERNAL_ERROR', 'Не удалось подключиться как наблюдатель')
-      }
+      })()
     })
 
     socket.on('disconnect', () => {

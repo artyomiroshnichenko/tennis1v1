@@ -15,15 +15,17 @@ import { LS_ACCESS, LS_NICKNAME, LS_REFRESH } from '../sessionKeys'
 import type { Side } from '../game/gameTypes'
 import { destroyGame, startBotMatch } from '../game/startPhaser'
 import { getGameSocket, disconnectGameSocket } from '../net/gameSocket'
+import { mountAdminSection } from './adminScreen'
 import { openLobbyCreate, openLobbyJoin, openSpectatorJoin } from './lobbyScreen'
 import '../ui/home.css'
 
 type ProfileState =
   | { kind: 'loading' }
   | { kind: 'guest'; nickname: string }
-  | { kind: 'user'; id: string; nickname: string }
+  | { kind: 'user'; id: string; nickname: string; role: 'USER' | 'ADMIN' }
 
 let profile: ProfileState = { kind: 'loading' }
+let adminCleanup: (() => void) | null = null
 let appRoot: HTMLElement
 let gameRoot: HTMLElement | null = null
 let backBtn: HTMLButtonElement | null = null
@@ -46,9 +48,11 @@ async function restoreProfileFromApi(): Promise<void> {
     type: string
     nickname: string
     id?: string
+    role?: 'USER' | 'ADMIN'
   }>('/profile/me')
   if (me.type === 'user' && me.id) {
-    setProfile({ kind: 'user', id: me.id, nickname: me.nickname })
+    const role = me.role === 'ADMIN' ? 'ADMIN' : 'USER'
+    setProfile({ kind: 'user', id: me.id, nickname: me.nickname, role })
   } else {
     setProfile({ kind: 'guest', nickname: me.nickname })
   }
@@ -796,9 +800,13 @@ async function runBotMatch(nickname: string, difficulty: BotDifficulty): Promise
 }
 
 function render(): void {
+  adminCleanup?.()
+  adminCleanup = null
+
   const nick = getDisplayNickname()
   const nickOk = nick.length >= 3
   const isUser = profile.kind === 'user'
+  const isAdmin = profile.kind === 'user' && profile.role === 'ADMIN'
   const loading = profile.kind === 'loading'
 
   appRoot.innerHTML = ''
@@ -811,6 +819,36 @@ function render(): void {
   sub.className = 'home-sub'
   sub.textContent = 'Большой теннис в браузере'
   appRoot.appendChild(sub)
+
+  if (isAdmin) {
+    const wrap = document.createElement('div')
+    appRoot.appendChild(wrap)
+    adminCleanup = mountAdminSection(wrap, {
+      onWatch: (code) => {
+        void (async () => {
+          try {
+            const nickname = await ensureReadyToPlay()
+            const u = new URL(window.location.href)
+            u.searchParams.set('room', code.trim())
+            u.searchParams.set('watch', '1')
+            u.searchParams.set('adm', '1')
+            window.history.replaceState({}, '', u.toString())
+            await openSpectatorJoin({
+              code,
+              nickname,
+              asAdmin: true,
+              onLeave: () => {
+                showHomeView()
+                render()
+              },
+            })
+          } catch (e) {
+            alert(e instanceof Error ? e.message : 'Не удалось открыть наблюдение')
+          }
+        })()
+      },
+    })
+  }
 
   const nickRow = document.createElement('div')
   nickRow.className = 'nickname-row'
@@ -964,11 +1002,18 @@ export async function mountHome(root: HTMLElement): Promise<void> {
   const watch = params.get('watch')
 
   if (roomParam?.trim() && watch === '1') {
+    const asAdmin = params.get('adm') === '1'
+    if (asAdmin && (profile.kind !== 'user' || profile.role !== 'ADMIN')) {
+      alert('Наблюдение администратора доступно только учётной записи с ролью admin')
+      render()
+      return
+    }
     try {
       const nickname = await ensureReadyToPlay()
       await openSpectatorJoin({
         code: roomParam.trim(),
         nickname,
+        asAdmin: asAdmin || undefined,
         onLeave: () => {
           showHomeView()
           render()
