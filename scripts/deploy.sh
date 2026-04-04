@@ -43,7 +43,7 @@ echo ""
 echo "▶ [4/4] Применяю миграции БД..."
 # Подождать пока PostgreSQL поднимется
 sleep 5
-docker compose -f docker-compose.prod.yml exec -T server npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml exec -T server npm run db:migrate
 echo "✓ Миграции применены"
 
 # ─── Статус ──────────────────────────────────────────────────────────────────

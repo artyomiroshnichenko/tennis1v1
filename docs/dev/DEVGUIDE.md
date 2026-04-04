@@ -182,7 +182,7 @@ docker compose -f docker-compose.dev.yml ps
 # Установить зависимости и применить миграции БД
 cd server
 npm install
-npx prisma migrate dev
+npm run db:migrate:dev
 
 # Запустить сервер (остаётся в фоне этого терминала)
 npm run dev
@@ -201,7 +201,7 @@ npm run dev
 | Сервер (API) | http://localhost:3000 | Express + Socket.io |
 | Готовность БД | http://localhost:3000/health/ready | Должен вернуть `200` и `database: up`; при `503` — см. раздел «Если не сохраняется никнейм» |
 | PostgreSQL | localhost:5432 | Только для подключений (не браузер) |
-| Prisma Studio | http://localhost:5555 | Запускается отдельно: `npx prisma studio` |
+| Prisma Studio | http://localhost:5555 | `cd server && npm run db:studio` |
 
 ---
 
@@ -211,7 +211,7 @@ npm run dev
 
 1. **Docker:** `docker compose -f docker-compose.dev.yml ps` — контейнер `postgres` в статусе Up. Если нет: `docker compose -f docker-compose.dev.yml up -d`.
 2. **`server/.env`:** есть файл (скопировать из `server/.env.example`), заполнены **`DATABASE_URL`** (как в примере для локального postgres) и **`JWT_SECRET`**.
-3. **Миграции:** из каталога `server/` выполнить `npx prisma migrate deploy` (или `migrate dev` при разработке).
+3. **Миграции:** из каталога `server/` после `npm ci` или `npm install` выполнить **`npm run db:migrate`** (прод) или **`npm run db:migrate:dev`** (разработка). Не вызывайте **`npx prisma …`** без установленных зависимостей — npx может скачать **Prisma 7** и дать **P1012** на текущей схеме.
 4. **Проверка:** в браузере открыть http://localhost:3000/health/ready — ожидается JSON с `"database": "up"`.
 
 Если клиент открыт с одной машины, а сервер запущен в другом окружении (только Windows vs только WSL), убедитесь, что и Vite, и Node смотрят на один и тот же `localhost:3000` и что порт 5432 с хоста доступен процессу сервера.
@@ -244,7 +244,7 @@ git pull
 npm install          # в server/ и client/
 
 # Если добавились новые миграции БД
-cd server && npx prisma migrate dev
+cd server && npm install && npm run db:migrate:dev
 ```
 
 ### Переменные окружения
@@ -441,8 +441,7 @@ cd client && npm ci && npm run build && cd ..
 docker compose -f docker-compose.prod.yml up -d
 
 # Применить миграции БД (используется Prisma из node_modules образа — см. package.json)
-docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
-# Либо: exec server npm run db:migrate
+docker compose -f docker-compose.prod.yml exec server npm run db:migrate
 
 # Проверить что всё запущено
 docker compose -f docker-compose.prod.yml ps
@@ -467,7 +466,7 @@ cd client && npm ci && npm run build && cd ..
 docker compose -f docker-compose.prod.yml up -d --build
 
 # Применить миграции если изменилась схема БД
-docker compose -f docker-compose.prod.yml exec server npx prisma migrate deploy
+docker compose -f docker-compose.prod.yml exec server npm run db:migrate
 ```
 
 ---
@@ -524,7 +523,7 @@ UPDATE "User" SET role = 'ADMIN' WHERE nickname = 'ваш_никнейм';
 
 ```bash
 cd server
-npx prisma studio
+npm run db:studio
 # Открывается веб-интерфейс на localhost:5555
 ```
 
@@ -583,19 +582,19 @@ model MatchPlayer {
 
 ### Версия Prisma и CLI
 
-Команды выполнять **из каталога `server/`**: `cd server && npx prisma …`. Версия `prisma` и `@prisma/client` зафиксирована в **`server/package.json`**. Глобальный **Prisma 7** против схемы этого репозитория даёт **P1012** — не использовать глобальный CLI для этого проекта; подробности в **`docs/dev/BACKLOG.md`** (ENG-PRISMA7-CLI-DATASOURCE).
+Выполнять **из каталога `server/`** после `npm install`: миграции и Studio — через **`npm run db:migrate`**, **`npm run db:migrate:dev`**, **`npm run db:studio`** (в `PATH` подставится `prisma` из `node_modules`). Не вызывать **`npx prisma …`**, если в `server/node_modules` ещё нет пакета `prisma`: npx скачает **Prisma 7** → **P1012**. Подробности — **`docs/dev/BACKLOG.md`** (ENG-PRISMA7-CLI-DATASOURCE).
 
 ### Миграции
 
 ```bash
 # Создать новую миграцию после изменения schema.prisma
-npx prisma migrate dev --name название_миграции
+npm run db:migrate:dev -- --name название_миграции
 
 # Применить миграции на сервере
-npx prisma migrate deploy
+npm run db:migrate
 
 # Сбросить БД (только dev!)
-npx prisma migrate reset
+npm run db:reset
 ```
 
 ---

@@ -10,13 +10,13 @@
 
 ### Задачи
 
-- В CI и у разработчиков: для миграций и `prisma generate` использовать **локальный** CLI из проекта: `cd server && npx prisma …` (без глобальной установки Prisma 7 поверх репо).
+- В CI и у разработчиков: после `npm ci` в `server/` вызывать **`npm run db:migrate`**, **`npm run db:migrate:dev`**, **`npm run db:studio`** (или `npm exec prisma …`), а не голый **`npx prisma`**, если локальный пакет не установлен — иначе подтянется Prisma 7 → **P1012**.
 - **Docker prod:** в финальном образе сервера пакет `prisma` должен быть в **`dependencies`** (не только в `devDependencies`), иначе при `npm install --omit=dev` CLI нет и `npx prisma` подтягивает **последнюю** версию с npm (часто 7.x) → **P1012**. В репозитории это исправлено: `prisma` перенесён в `dependencies` у `server/package.json`.
 - Либо спланировать отдельный эпик **миграции на Prisma 7** (новый конфиг, адаптер/accelerate, регрессия API).
 
 ### Критерий готовности
 
-- [x] В `DEVGUIDE.md` явно указано: версия Prisma из `package.json`, команда `npx prisma` из каталога `server/`, предупреждение про глобальный Prisma 7 и P1012.
+- [x] В `DEVGUIDE.md` явно указано: версия Prisma из `package.json`, команды `npm run db:*` из каталога `server/`, предупреждение про голый `npx prisma` и P1012.
 - Либо репозиторий переведён на Prisma 7 с рабочими миграциями и документацией.
 
 ---

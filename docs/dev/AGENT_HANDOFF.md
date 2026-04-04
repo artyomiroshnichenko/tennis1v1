@@ -120,13 +120,13 @@
 ```bash
 docker compose -f docker-compose.dev.yml up -d
 # server/.env — DATABASE_URL, JWT_SECRET, Firebase (для регистрации)
-cd server && npm install && npx prisma migrate deploy && npm run dev
+cd server && npm install && npm run db:migrate && npm run dev
 # client/.env — Firebase web (опционально для входа)
 cd client && npm install && npm run dev
 ```
 
 - Клиент: `http://localhost:5173` (прокси `/api`, `/socket.io` → `:3000`).
-- БД: `cd server && npx prisma studio`.
+- БД: `cd server && npm run db:studio`.
 
 ---
 
