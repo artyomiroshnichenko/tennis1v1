@@ -390,6 +390,8 @@ export class MatchEngine {
 
   private tryAutoHitWindow(): PendingEmit | null {
     if (this.phase.k !== 'rally') return null
+    /** Пока подача «в полёте» до валидного отскока — приёмник не бьёт (как в теннисе). */
+    if (this.serveInPlay) return null
     for (const side of ['left', 'right'] as const) {
       if (this.lastHit === side) continue
       if (!this.canReachBall(side)) continue
