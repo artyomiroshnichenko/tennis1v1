@@ -196,6 +196,20 @@ export class MatchGame3D {
   /** CanvasTexture корта/сетки — dispose при destroy */
   private disposableTextures: THREE.Texture[] = []
 
+  private camSmoothPos = new THREE.Vector3()
+  private camSmoothLook = new THREE.Vector3()
+  private ballVisualTarget = new THREE.Vector3()
+  private ballTargetInitialized = false
+  private ballGlowMat!: THREE.MeshBasicMaterial
+  private trailGeom!: THREE.BufferGeometry
+  private trailPoints!: THREE.Points
+  private readonly trailLen = 10
+  private readonly trailPosScratch = new Float32Array(10 * 3)
+  private trailPrimed = false
+  private lastLoopMs = 0
+  private readonly idealCamPos = new THREE.Vector3()
+  private readonly idealCamLook = new THREE.Vector3()
+
   constructor(parentId: string, opts: MatchSceneOpts) {
     this.parentId = parentId
     this.opts = opts
@@ -296,6 +310,8 @@ export class MatchGame3D {
 
     this.camera = new THREE.PerspectiveCamera(48, w / h, 0.1, 220)
     this.camera.position.set(0, 16, 18)
+    this.camSmoothPos.copy(this.camera.position)
+    this.camSmoothLook.set(0, 2.2, 0)
 
     const texGrass = createOuterGrassTexture()
     const texCourt = createHardCourtSurfaceTexture()
@@ -398,11 +414,36 @@ export class MatchGame3D {
     this.ball.castShadow = true
     this.courtRoot.add(this.ball)
 
-    this.ballGlow = new THREE.Mesh(
-      new THREE.SphereGeometry(0.16, 12, 10),
-      new THREE.MeshBasicMaterial({ color: 0x88ffaa, transparent: true, opacity: 0.12 }),
-    )
+    this.ballGlowMat = new THREE.MeshBasicMaterial({
+      color: 0x88ffaa,
+      transparent: true,
+      opacity: 0.12,
+      depthWrite: false,
+    })
+    this.ballGlow = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), this.ballGlowMat)
     this.courtRoot.add(this.ballGlow)
+
+    this.trailGeom = new THREE.BufferGeometry()
+    this.trailGeom.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(this.trailLen * 3), 3),
+    )
+    this.trailGeom.setAttribute(
+      'color',
+      new THREE.BufferAttribute(new Float32Array(this.trailLen * 3), 3),
+    )
+    const trailMat = new THREE.PointsMaterial({
+      vertexColors: true,
+      size: 0.2,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      sizeAttenuation: true,
+    })
+    this.trailPoints = new THREE.Points(this.trailGeom, trailMat)
+    this.trailPoints.visible = false
+    this.trailPoints.frustumCulled = false
+    this.courtRoot.add(this.trailPoints)
 
     this.ballVelHelper = new THREE.ArrowHelper(
       new THREE.Vector3(0, 0, 1),
@@ -728,7 +769,9 @@ export class MatchGame3D {
 
   private loop = (): void => {
     this.raf = requestAnimationFrame(this.loop)
-    const dt = 1 / 60
+    const now = performance.now()
+    const dt = this.lastLoopMs > 0 ? Math.min(0.05, (now - this.lastLoopMs) / 1000) : 1 / 60
+    this.lastLoopMs = now
     const s = this.lastState
     if (s) {
       this.syncScene(s)
@@ -753,7 +796,8 @@ export class MatchGame3D {
             : ''
     }
     this.updateSidesFlip()
-    this.updateCamera()
+    this.smoothPresentation(dt)
+    this.updateCamera(dt)
     this.updateIndicatorAnimation()
     this.emitMovement(dt)
     this.renderer.render(this.scene, this.camera)
@@ -800,8 +844,12 @@ export class MatchGame3D {
   private syncScene(s: GameStateWire): void {
     const bl = normToMeters(s.ball.x, s.ball.y)
     const bw = courtToWorld(bl.xM, bl.yM)
-    this.ball.position.set(bw.x, 0.88, bw.z)
-    this.ballGlow.position.copy(this.ball.position)
+    this.ballVisualTarget.set(bw.x, 0.88, bw.z)
+    if (!this.ballTargetInitialized) {
+      this.ball.position.copy(this.ballVisualTarget)
+      this.ballGlow.position.copy(this.ballVisualTarget)
+      this.ballTargetInitialized = true
+    }
 
     const vxn = s.ball.vx * COURT_W_SINGLE
     const vzn = s.ball.vy * COURT_L
@@ -809,7 +857,7 @@ export class MatchGame3D {
     if (spd > 0.04) {
       const dir = new THREE.Vector3(vxn, 0, vzn).normalize()
       this.ballVelHelper.visible = true
-      this.ballVelHelper.position.set(bw.x, 1.05, bw.z)
+      this.ballVelHelper.position.set(this.ball.position.x, 1.05, this.ball.position.z)
       this.ballVelHelper.setDirection(dir)
       const len = Math.min(4.5, 1.2 + spd * 8)
       this.ballVelHelper.setLength(len, len * 0.12, len * 0.08)
@@ -833,24 +881,115 @@ export class MatchGame3D {
     faceBall(this.plRight, rw.x, rw.z)
   }
 
-  private updateCamera(): void {
+  /** Сглаживание мяча, свечения и хвоста между тиками состояния. */
+  private smoothPresentation(dt: number): void {
+    const ab = 1 - Math.exp(-14 * dt)
+    this.ball.position.lerp(this.ballVisualTarget, ab)
+    this.ballGlow.position.copy(this.ball.position)
+
+    const s = this.lastState
+    let spd = 0
+    if (s) {
+      const vxn = s.ball.vx * COURT_W_SINGLE
+      const vzn = s.ball.vy * COURT_L
+      spd = Math.hypot(vxn, vzn)
+    }
+    const gscale = 1 + Math.min(1.15, spd * 0.17)
+    this.ballGlow.scale.setScalar(gscale)
+    this.ballGlowMat.opacity = 0.08 + Math.min(0.24, spd * 0.095)
+
+    const showTrail =
+      !!s && spd > 0.11 && (s.phase === 'playing' || s.phase === 'serving')
+    this.trailPoints.visible = showTrail
+    if (!showTrail) this.trailPrimed = false
+    else this.updateBallTrail()
+  }
+
+  private updateBallTrail(): void {
+    const n = this.trailLen
+    const p = this.ball.position
+    if (!this.trailPrimed) {
+      for (let i = 0; i < n; i++) {
+        const k = i * 3
+        this.trailPosScratch[k] = p.x
+        this.trailPosScratch[k + 1] = p.y
+        this.trailPosScratch[k + 2] = p.z
+      }
+      this.trailPrimed = true
+    } else {
+      for (let i = n - 1; i >= 1; i--) {
+        const d = i * 3
+        const src = (i - 1) * 3
+        this.trailPosScratch[d] = this.trailPosScratch[src]
+        this.trailPosScratch[d + 1] = this.trailPosScratch[src + 1]
+        this.trailPosScratch[d + 2] = this.trailPosScratch[src + 2]
+      }
+      this.trailPosScratch[0] = p.x
+      this.trailPosScratch[1] = p.y
+      this.trailPosScratch[2] = p.z
+    }
+
+    const posAttr = this.trailGeom.getAttribute('position') as THREE.BufferAttribute
+    const colAttr = this.trailGeom.getAttribute('color') as THREE.BufferAttribute
+    for (let i = 0; i < n; i++) {
+      const k = i * 3
+      posAttr.array[k] = this.trailPosScratch[k]
+      posAttr.array[k + 1] = this.trailPosScratch[k + 1]
+      posAttr.array[k + 2] = this.trailPosScratch[k + 2]
+      const fade = 1 - i / Math.max(1, n - 1) * 0.88
+      colAttr.array[k] = 0.35 + 0.65 * fade
+      colAttr.array[k + 1] = 0.92 + 0.08 * fade
+      colAttr.array[k + 2] = 0.45 + 0.35 * fade
+    }
+    posAttr.needsUpdate = true
+    colAttr.needsUpdate = true
+  }
+
+  private updateCamera(dt: number): void {
     const s = this.lastState
     if (!s) return
-    const self = normToMeters(
-      this.opts.mySide === 'left' ? s.players.left.x : s.players.right.x,
-      this.opts.mySide === 'left' ? s.players.left.y : s.players.right.y,
-    )
-    const sw = courtToWorld(self.xM, self.yM)
-    const bl = normToMeters(s.ball.x, s.ball.y)
-    const bw = courtToWorld(bl.xM, bl.yM)
-    const behind = this.opts.mySide === 'left' ? 13 : -13
-    const cx = sw.x + 1.2
-    const cz = sw.z + behind
-    this.camera.position.lerp(new THREE.Vector3(cx, 13.5, cz), 0.08)
+
+    const ml = normToMeters(s.players.left.x, s.players.left.y)
+    const mr = normToMeters(s.players.right.x, s.players.right.y)
+    const mid = courtToWorld((ml.xM + mr.xM) / 2, (ml.yM + mr.yM) / 2)
+
+    let sw: THREE.Vector3
+    let cx: number
+    let cz: number
+    if (this.opts.spectator) {
+      sw = mid
+      cx = sw.x * 0.82 + this.ball.position.x * 0.18 + 0.9
+      cz = sw.z - 14
+    } else {
+      const self = normToMeters(
+        this.opts.mySide === 'left' ? s.players.left.x : s.players.right.x,
+        this.opts.mySide === 'left' ? s.players.left.y : s.players.right.y,
+      )
+      sw = courtToWorld(self.xM, self.yM)
+      const behind = this.opts.mySide === 'left' ? 13 : -13
+      cx = sw.x + 1.2
+      cz = sw.z + behind
+    }
+
+    this.idealCamPos.set(cx, 13.5, cz)
     const lookY = 2.2
-    const tx = bw.x * 0.35 + sw.x * 0.65
-    const tz = bw.z * 0.35 + sw.z * 0.65
-    this.camera.lookAt(tx, lookY, tz)
+    const bx = this.ball.position.x
+    const bz = this.ball.position.z
+    const tx = bx * 0.42 + sw.x * 0.58
+    const tz = bz * 0.42 + sw.z * 0.58
+    this.idealCamLook.set(tx, lookY, tz)
+
+    if (this.camSmoothPos.distanceTo(this.idealCamPos) > 24) {
+      this.camSmoothPos.copy(this.idealCamPos)
+      this.camSmoothLook.copy(this.idealCamLook)
+    } else {
+      const ac = 1 - Math.exp(-3.4 * dt)
+      this.camSmoothPos.lerp(this.idealCamPos, ac)
+      this.camSmoothLook.lerp(this.idealCamLook, ac)
+    }
+
+    this.camera.position.copy(this.camSmoothPos)
+    this.camera.lookAt(this.camSmoothLook)
   }
 
   private updateIndicatorAnimation(): void {
@@ -1095,6 +1234,8 @@ export class MatchGame3D {
     this.indicatorArrowEl = null
     for (const t of this.disposableTextures) t.dispose()
     this.disposableTextures.length = 0
+    this.trailGeom.dispose()
+    ;(this.trailPoints.material as THREE.Material).dispose()
     this.renderer.dispose()
     this.root.remove()
   }
