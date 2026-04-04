@@ -1,10 +1,15 @@
 import Phaser from 'phaser'
 import type { Socket } from 'socket.io-client'
 import type { GameStateWire, Score, Side } from './gameTypes'
+import {
+  ALLEY_W,
+  COURT_L,
+  COURT_W_DOUBLE,
+  COURT_W_SINGLE,
+  NET_Y,
+  SERVICE_DEPTH,
+} from './courtConstants'
 import { matchAudio } from './matchAudio'
-
-const COURT_W = 8.23
-const COURT_L = 23.77
 
 const SIDES_FLIP_MS = 2600
 
@@ -33,8 +38,9 @@ function courtPixelY(yM: number, my: Side, ch: number): number {
   return t * ch
 }
 
+/** xM — метры по ширине одиночного корта (0…COURT_W_SINGLE); cw — ширина экрана полного корта с аллеями. */
 function courtPixelX(xM: number, cw: number): number {
-  return (xM / COURT_W) * cw
+  return ((ALLEY_W + xM) / COURT_W_DOUBLE) * cw
 }
 
 function reasonUsesEventSoundOnly(reason: string): boolean {
@@ -51,10 +57,13 @@ export class MatchScene extends Phaser.Scene {
   private opts!: MatchSceneOpts
   private lastState: GameStateWire | null = null
   private graphics!: Phaser.GameObjects.Graphics
-  private ballG!: Phaser.GameObjects.Arc
-  private leftG!: Phaser.GameObjects.Arc
-  private rightG!: Phaser.GameObjects.Arc
+  private playersGraphics!: Phaser.GameObjects.Graphics
+  private velGraphics!: Phaser.GameObjects.Graphics
+  private ballGraphics!: Phaser.GameObjects.Graphics
   private courtLayer!: Phaser.GameObjects.Container
+  private lastLp = { x: 0, y: 0 }
+  private lastRp = { x: 0, y: 0 }
+  private lastBp = { x: 0, y: 0 }
   private sidesDim!: Phaser.GameObjects.Rectangle
   private scoreText!: Phaser.GameObjects.Text
   private toastText!: Phaser.GameObjects.Text
@@ -80,6 +89,8 @@ export class MatchScene extends Phaser.Scene {
   private indicatorStart = 0
   private indicatorEl: HTMLDivElement | null = null
   private indicatorBar: HTMLDivElement | null = null
+  private indicatorArrowWrap: HTMLDivElement | null = null
+  private indicatorArrowEl: HTMLDivElement | null = null
   private pointerTarget: { xM: number; yM: number } | null = null
   private moveEmitAcc = 0
   private prevBallVy: number | null = null
@@ -103,7 +114,8 @@ export class MatchScene extends Phaser.Scene {
     }
     const emoji = map[p.type] ?? '💬'
     const a = p.anchor ?? 'spectator'
-    const target = a === 'right' ? this.rightG : a === 'left' ? this.leftG : this.ballG
+    const target =
+      a === 'right' ? this.lastRp : a === 'left' ? this.lastLp : this.lastBp
     const t = this.add
       .text(target.x, target.y - 52, emoji, { fontSize: '42px', fontFamily: 'system-ui, sans-serif' })
       .setOrigin(0.5)
@@ -327,10 +339,10 @@ export class MatchScene extends Phaser.Scene {
 
     this.courtLayer = this.add.container(0, 0)
     this.graphics = this.add.graphics()
-    this.ballG = this.add.circle(0, 0, 8, 0xf5d547, 1)
-    this.leftG = this.add.circle(0, 0, 18, 0x4a90d9, 1)
-    this.rightG = this.add.circle(0, 0, 18, 0xe85d75, 1)
-    this.courtLayer.add([this.graphics, this.ballG, this.leftG, this.rightG])
+    this.playersGraphics = this.add.graphics()
+    this.velGraphics = this.add.graphics()
+    this.ballGraphics = this.add.graphics()
+    this.courtLayer.add([this.graphics, this.playersGraphics, this.velGraphics, this.ballGraphics])
     this.courtLayer.setDepth(2)
 
     this.sidesDim = this.add
@@ -501,8 +513,8 @@ export class MatchScene extends Phaser.Scene {
     const pad = 56
     const innerW = width - pad * 2
     const innerH = height - pad * 2 - 72
-    this.scalePx = Math.min(innerW / COURT_W, innerH / COURT_L)
-    this.cw = COURT_W * this.scalePx
+    this.scalePx = Math.min(innerW / COURT_W_DOUBLE, innerH / COURT_L)
+    this.cw = COURT_W_DOUBLE * this.scalePx
     this.ch = COURT_L * this.scalePx
     this.ox = (width - this.cw) / 2
     this.oy = pad + 48
@@ -527,7 +539,8 @@ export class MatchScene extends Phaser.Scene {
     const lx = sx - this.ox
     const ly = sy - this.oy
     if (lx < 0 || ly < 0 || lx > this.cw || ly > this.ch) return null
-    const xM = (lx / this.cw) * COURT_W
+    const xFromDoubleLeft = (lx / this.cw) * COURT_W_DOUBLE
+    const xM = Math.max(0, Math.min(COURT_W_SINGLE, xFromDoubleLeft - ALLEY_W))
     const t = ly / this.ch
     const yM =
       this.opts.mySide === 'left' ? t * COURT_L : (1 - t) * COURT_L
@@ -538,7 +551,7 @@ export class MatchScene extends Phaser.Scene {
     const s = this.lastState
     if (!s) return null
     const p = this.opts.mySide === 'left' ? s.players.left : s.players.right
-    return { x: p.x * COURT_W, y: p.y * COURT_L }
+    return { x: p.x * COURT_W_SINGLE, y: p.y * COURT_L }
   }
 
   private showIndicator(phase: 'direction' | 'power'): void {
@@ -555,19 +568,30 @@ export class MatchScene extends Phaser.Scene {
       label.style.cssText = 'color:#e8e8f0;font:14px system-ui;margin-bottom:8px;'
       label.id = 'match-ind-label'
       const bar = document.createElement('div')
+      bar.id = 'match-ind-bar'
       bar.style.cssText =
         'position:relative;height:14px;border-radius:7px;background:#2a2a3e;overflow:hidden;border:1px solid #4a4a60;'
       const fill = document.createElement('div')
       fill.style.cssText =
         'position:absolute;top:0;left:0;bottom:0;width:50%;background:linear-gradient(90deg,#4a90d9,#f5d547);'
       bar.appendChild(fill)
+      const arrowWrap = document.createElement('div')
+      arrowWrap.style.cssText =
+        'display:none;height:56px;margin:10px auto 0;text-align:center;transition:transform 0.05s linear;'
+      const arrow = document.createElement('div')
+      arrow.textContent = '↑'
+      arrow.style.cssText =
+        'display:inline-block;font-size:44px;line-height:56px;color:#b8f0c8;text-shadow:0 0 14px rgba(120,255,180,0.55);transform-origin:50% 65%;'
+      arrowWrap.appendChild(arrow)
       const hint = document.createElement('div')
       hint.style.cssText = 'color:#8888a0;font:12px system-ui;margin-top:8px;'
       hint.textContent = 'Пробел / тап — зафиксировать'
-      root.append(label, bar, hint)
+      root.append(label, bar, arrowWrap, hint)
       parent.appendChild(root)
       this.indicatorEl = root
       this.indicatorBar = fill
+      this.indicatorArrowWrap = arrowWrap
+      this.indicatorArrowEl = arrow
     }
     const lab = this.indicatorEl.querySelector('#match-ind-label')
     if (lab) {
@@ -578,6 +602,14 @@ export class MatchScene extends Phaser.Scene {
             ? 'Точность подачи'
             : 'Направление удара'
     }
+    const barEl = this.indicatorEl.querySelector('#match-ind-bar') as HTMLElement | null
+    if (phase === 'power') {
+      if (barEl) barEl.style.display = 'block'
+      if (this.indicatorArrowWrap) this.indicatorArrowWrap.style.display = 'none'
+    } else {
+      if (barEl) barEl.style.display = 'none'
+      if (this.indicatorArrowWrap) this.indicatorArrowWrap.style.display = 'block'
+    }
     this.indicatorEl.style.display = 'block'
   }
 
@@ -587,7 +619,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private commitIndicator(): void {
-    if (!this.indicatorMode || !this.indicatorBar) return
+    if (!this.indicatorMode || !this.indicatorEl) return
     const t = (this.time.now - this.indicatorStart) / 1000
     const v = 0.5 + 0.5 * Math.sin(t * (this.indicatorMode === 'power' ? 2.8 : 2.2))
     matchAudio.racketHit()
@@ -636,10 +668,16 @@ export class MatchScene extends Phaser.Scene {
       this.serveText.setText(s.phase === 'serving' || s.phase === 'playing' ? srv : '')
     }
 
-    if (this.indicatorMode && this.indicatorBar) {
+    if (this.indicatorMode && this.indicatorEl) {
       const t = (this.time.now - this.indicatorStart) / 1000
       const v = 0.5 + 0.5 * Math.sin(t * (this.indicatorMode === 'power' ? 2.8 : 2.2))
-      this.indicatorBar.style.width = `${Math.round(v * 100)}%`
+      if (this.indicatorMode === 'power' && this.indicatorBar) {
+        this.indicatorBar.style.width = `${Math.round(v * 100)}%`
+      }
+      if (this.indicatorMode === 'direction' && this.indicatorArrowEl) {
+        const deg = -88 + v * 176
+        this.indicatorArrowEl.style.transform = `rotate(${deg}deg)`
+      }
     }
 
     if (this.keys && Phaser.Input.Keyboard.JustDown(this.keys.space) && this.indicatorMode) {
@@ -669,7 +707,7 @@ export class MatchScene extends Phaser.Scene {
 
       if (this.pointerTarget && s && (s.phase === 'playing' || s.phase === 'serving')) {
         const self = this.opts.mySide === 'left' ? s.players.left : s.players.right
-        const xM = self.x * COURT_W
+        const xM = self.x * COURT_W_SINGLE
         const yM = self.y * COURT_L
         const tx = this.pointerTarget.xM - xM
         const ty = this.pointerTarget.yM - yM
@@ -721,24 +759,129 @@ export class MatchScene extends Phaser.Scene {
     g.clear()
     const hw = this.cw / 2
     const hh = this.ch / 2
-    g.lineStyle(2, 0x6c6c8a, 1)
+
+    const lx1 = this.worldToLayer(0, NET_Y).x
+    const lx2 = this.worldToLayer(COURT_W_SINGLE, NET_Y).x
+
+    g.fillStyle(0x6cb86c, 1)
+    g.fillRect(-hw, -hh, this.cw, this.ch)
+    g.fillStyle(0x1a6cb5, 1)
+    g.fillRect(lx1, -hh, lx2 - lx1, this.ch)
+    const midX = this.worldToLayer(COURT_W_SINGLE / 2, NET_Y).x
+    const netY = this.worldToLayer(COURT_W_SINGLE / 2, NET_Y).y
+    const svcN = this.worldToLayer(COURT_W_SINGLE / 2, NET_Y - SERVICE_DEPTH).y
+    const svcS = this.worldToLayer(COURT_W_SINGLE / 2, NET_Y + SERVICE_DEPTH).y
+    const tick = Math.max(8, this.ch * (0.1 / COURT_L))
+
+    g.lineStyle(3, 0xf8f8ff, 0.95)
     g.strokeRect(-hw, -hh, this.cw, this.ch)
-    g.lineStyle(3, 0xffffff, 0.35)
-    g.lineBetween(-hw, 0, hw, 0)
-    g.lineStyle(1, 0xffffff, 0.2)
-    g.lineBetween(0, -hh, 0, hh)
+
+    g.lineStyle(2, 0xf2f2f8, 0.9)
+    g.lineBetween(lx1, -hh, lx1, hh)
+    g.lineBetween(lx2, -hh, lx2, hh)
+    g.lineBetween(lx1, -hh, lx2, -hh)
+    g.lineBetween(lx1, hh, lx2, hh)
+
+    g.lineStyle(3, 0xe8e8f0, 0.85)
+    g.lineBetween(-hw, netY, hw, netY)
+    g.lineStyle(1, 0x2c2c38, 0.75)
+    g.lineBetween(-hw, netY + 1, hw, netY + 1)
+
+    g.lineStyle(2, 0xf2f2f8, 0.88)
+    g.lineBetween(midX, -hh, midX, -hh + tick)
+    g.lineBetween(midX, hh, midX, hh - tick)
+    g.lineBetween(lx1, svcN, lx2, svcN)
+    g.lineBetween(lx1, svcS, lx2, svcS)
+    g.lineBetween(midX, svcN, midX, svcS)
+  }
+
+  private drawPlayerFigure(
+    g: Phaser.GameObjects.Graphics,
+    lx: number,
+    ly: number,
+    color: number,
+    aimX: number,
+    aimY: number,
+  ): void {
+    const ang = Math.atan2(aimY - ly, aimX - lx)
+    const bodyRx = Math.max(11, this.scalePx * 0.42)
+    const bodyRy = bodyRx * 0.78
+    g.fillStyle(0x000000, 0.18)
+    g.fillEllipse(lx + 2, ly + 4, bodyRx * 2, bodyRy * 2)
+    g.fillStyle(color, 1)
+    g.fillEllipse(lx, ly, bodyRx * 2, bodyRy * 2)
+    g.fillStyle(0xffffff, 0.22)
+    g.fillEllipse(lx - bodyRx * 0.25, ly - bodyRy * 0.35, bodyRx * 0.9, bodyRy * 0.55)
+
+    const handX = lx + Math.cos(ang) * bodyRx * 0.65
+    const handY = ly + Math.sin(ang) * bodyRy * 0.65
+    const rl = Math.max(22, this.scalePx * 0.85)
+    const tipX = handX + Math.cos(ang) * rl
+    const tipY = handY + Math.sin(ang) * rl
+    g.lineStyle(5, 0x1e1e24, 1)
+    g.lineBetween(handX, handY, tipX, tipY)
+    g.lineStyle(2.5, 0xd8d8e8, 0.95)
+    g.lineBetween(handX, handY, tipX - Math.cos(ang) * 8, tipY - Math.sin(ang) * 8)
+    g.lineStyle(1.5, 0x6a7a8a, 0.9)
+    g.strokeEllipse(tipX, tipY, 10, 14)
+  }
+
+  private drawTennisBall(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number): void {
+    g.fillStyle(0xfff4a8, 1)
+    g.fillCircle(x, y, r)
+    g.fillStyle(0xffe078, 0.45)
+    g.fillCircle(x - r * 0.25, y - r * 0.28, r * 0.55)
+    g.lineStyle(1.4, 0xf8f8f0, 0.92)
+    g.beginPath()
+    g.arc(x, y, r * 0.88, -0.35, Math.PI * 0.65)
+    g.strokePath()
+    g.beginPath()
+    g.arc(x, y, r * 0.88, Math.PI * 0.85, Math.PI * 1.85)
+    g.strokePath()
   }
 
   private drawBodies(s: GameStateWire): void {
-    const bx = s.ball.x * COURT_W
+    const bx = s.ball.x * COURT_W_SINGLE
     const by = s.ball.y * COURT_L
     const bp = this.worldToLayer(bx, by)
-    this.ballG.setPosition(bp.x, bp.y)
+    this.lastBp.x = bp.x
+    this.lastBp.y = bp.y
 
-    const lp = this.worldToLayer(s.players.left.x * COURT_W, s.players.left.y * COURT_L)
-    const rp = this.worldToLayer(s.players.right.x * COURT_W, s.players.right.y * COURT_L)
-    this.leftG.setPosition(lp.x, lp.y)
-    this.rightG.setPosition(rp.x, rp.y)
+    const lp = this.worldToLayer(s.players.left.x * COURT_W_SINGLE, s.players.left.y * COURT_L)
+    const rp = this.worldToLayer(s.players.right.x * COURT_W_SINGLE, s.players.right.y * COURT_L)
+    this.lastLp.x = lp.x
+    this.lastLp.y = lp.y
+    this.lastRp.x = rp.x
+    this.lastRp.y = rp.y
+
+    this.velGraphics.clear()
+    const vxn = s.ball.vx * COURT_W_SINGLE
+    const vyn = s.ball.vy * COURT_L
+    const speed = Math.hypot(vxn, vyn)
+    if (speed > 1e-4) {
+      const b2 = this.worldToLayer(bx + vxn * 0.06, by + vyn * 0.06)
+      const dx = b2.x - bp.x
+      const dy = b2.y - bp.y
+      const len0 = Math.hypot(dx, dy)
+      if (len0 > 3) {
+        const ext = Math.min(130, len0 * 14)
+        const ux = dx / len0
+        const uy = dy / len0
+        this.velGraphics.lineStyle(4, 0x7fffab, 0.35)
+        this.velGraphics.lineBetween(bp.x, bp.y, bp.x + ux * ext, bp.y + uy * ext)
+        this.velGraphics.lineStyle(2, 0xffffff, 0.25)
+        this.velGraphics.lineBetween(bp.x, bp.y, bp.x + ux * ext * 0.92, bp.y + uy * ext * 0.92)
+      }
+    }
+
+    const pg = this.playersGraphics
+    pg.clear()
+    this.drawPlayerFigure(pg, lp.x, lp.y, 0x4a90d9, bx, by)
+    this.drawPlayerFigure(pg, rp.x, rp.y, 0xe85d75, bx, by)
+
+    const br = Math.max(5.5, Math.min(12, this.scalePx * 0.22))
+    this.ballGraphics.clear()
+    this.drawTennisBall(this.ballGraphics, bp.x, bp.y, br)
   }
 
   shutdown(): void {
@@ -771,6 +914,8 @@ export class MatchScene extends Phaser.Scene {
     this.indicatorEl?.remove()
     this.indicatorEl = null
     this.indicatorBar = null
+    this.indicatorArrowWrap = null
+    this.indicatorArrowEl = null
   }
 }
 
@@ -779,7 +924,7 @@ export function createMatchGame(parent: string, opts: MatchSceneOpts): Phaser.Ga
   return new Phaser.Game({
     type: Phaser.AUTO,
     parent,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#2a4a32',
     scale: {
       mode: Phaser.Scale.RESIZE,
       autoCenter: Phaser.Scale.CENTER_BOTH,
