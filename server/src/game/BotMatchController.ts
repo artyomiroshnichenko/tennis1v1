@@ -178,7 +178,10 @@ export class BotMatchController {
   }
 
   private updateBotMove(_dt: number): void {
-    if (this.engine.getWirePhase() === 'over') return
+    const phase = this.engine.getWirePhase()
+    if (phase === 'over' || phase === 'pause' || phase === 'serve_prep' || phase === 'serving') {
+      return
+    }
     const bx = this.engine.ball.x
     const by = this.engine.ball.y
     const p = this.botSide === 'left' ? this.engine.pl : this.engine.pr
@@ -187,7 +190,7 @@ export class BotMatchController {
     const l = len(dx, dy) || 1
     let nx = dx / l
     let ny = dy / l
-    if (this.botSide === 'right' && by < NET_Y - 0.35 && this.engine.getWirePhase() === 'playing') {
+    if (this.botSide === 'right' && by < NET_Y - 0.35 && phase === 'playing') {
       nx *= 0.55
       ny *= 0.55
     }

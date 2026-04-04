@@ -21,7 +21,6 @@ import {
 import {
   baselinePosition,
   clampPlayerToHalf,
-  clampReceiverDuringServe,
   halfForY,
   inDiagonalServiceTarget,
   inSinglesCourt,
@@ -243,13 +242,8 @@ export class MatchEngine {
     if (ph.k === 'point_pause' || ph.k === 'sides_change' || ph.k === 'done') return
     if (ph.k === 'hit_dir' || ph.k === 'hit_pwr') return
 
+    /** До удара по мячу никто не двигается (ни подающий с клавишами, ни приёмник/бот к мячу). */
     if (ph.k === 'serve_ready' || ph.k === 'serve_power' || ph.k === 'serve_aim') {
-      if (side === ph.server) return
-      const p = this.playerBody(side)
-      p.dx = dx
-      p.dy = dy
-      if (Math.abs(dx) + Math.abs(dy) > 0.01) this.setPlayerState(side, 'running')
-      else this.setPlayerState(side, 'idle')
       return
     }
 
@@ -453,31 +447,22 @@ export class MatchEngine {
     const serveSnap =
       ph.k === 'serve_ready' || ph.k === 'serve_power' || ph.k === 'serve_aim'
 
+    if (serveSnap) {
+      for (const s of ['left', 'right'] as const) {
+        const p = this.playerBody(s)
+        const b = baselinePosition(s)
+        p.x = b.x
+        p.y = b.y
+        p.dx = 0
+        p.dy = 0
+      }
+      return
+    }
+
     for (const s of ['left', 'right'] as const) {
       const st = s === 'left' ? this.plState : this.prState
       if (st === 'hitting' || st === 'serving') continue
       const p = this.playerBody(s)
-
-      if (serveSnap) {
-        const srv = ph.server
-        if (s === srv) {
-          const b = baselinePosition(srv)
-          p.x = b.x
-          p.y = b.y
-          p.dx = 0
-          p.dy = 0
-          continue
-        }
-        const n = norm(p.dx, p.dy)
-        const sp = PLAYER_SPEED * dt
-        const nx = p.x + n.x * sp
-        const ny = p.y + n.y * sp
-        const c = clampReceiverDuringServe(nx, ny, srv)
-        p.x = c.x
-        p.y = c.y
-        continue
-      }
-
       const n = norm(p.dx, p.dy)
       const sp = PLAYER_SPEED * dt
       const nx = p.x + n.x * sp
