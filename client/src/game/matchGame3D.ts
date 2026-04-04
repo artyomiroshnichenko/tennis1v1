@@ -40,6 +40,15 @@ export type MatchGameHandle = {
 
 const SIDES_FLIP_MS = 2600
 
+/**
+ * Один ракурс на весь корт; камера не следует за игроком и мячом.
+ * «Поворот при переходе» — только анимация `courtRoot.rotation` при смене сторон.
+ */
+function applyStaticMatchCamera(cam: THREE.PerspectiveCamera): void {
+  cam.position.set(0, 28, 32)
+  cam.lookAt(0, 0.45, 0)
+}
+
 function reasonUsesEventSoundOnly(reason: string): boolean {
   return (
     reason.includes('Аут') ||
@@ -196,8 +205,6 @@ export class MatchGame3D {
   /** CanvasTexture корта/сетки — dispose при destroy */
   private disposableTextures: THREE.Texture[] = []
 
-  private camSmoothPos = new THREE.Vector3()
-  private camSmoothLook = new THREE.Vector3()
   private ballVisualTarget = new THREE.Vector3()
   private ballTargetInitialized = false
   private ballGlowMat!: THREE.MeshBasicMaterial
@@ -207,8 +214,6 @@ export class MatchGame3D {
   private readonly trailPosScratch = new Float32Array(10 * 3)
   private trailPrimed = false
   private lastLoopMs = 0
-  private readonly idealCamPos = new THREE.Vector3()
-  private readonly idealCamLook = new THREE.Vector3()
 
   constructor(parentId: string, opts: MatchSceneOpts) {
     this.parentId = parentId
@@ -309,9 +314,7 @@ export class MatchGame3D {
     this.scene.background = new THREE.Color(0x34563f)
 
     this.camera = new THREE.PerspectiveCamera(48, w / h, 0.1, 220)
-    this.camera.position.set(0, 16, 18)
-    this.camSmoothPos.copy(this.camera.position)
-    this.camSmoothLook.set(0, 2.2, 0)
+    applyStaticMatchCamera(this.camera)
 
     const texGrass = createOuterGrassTexture()
     const texCourt = createHardCourtSurfaceTexture()
@@ -797,7 +800,7 @@ export class MatchGame3D {
     }
     this.updateSidesFlip()
     this.smoothPresentation(dt)
-    this.updateCamera(dt)
+    this.updateCamera()
     this.updateIndicatorAnimation()
     this.emitMovement(dt)
     this.renderer.render(this.scene, this.camera)
@@ -945,64 +948,8 @@ export class MatchGame3D {
     colAttr.needsUpdate = true
   }
 
-  private updateCamera(dt: number): void {
-    const s = this.lastState
-    if (!s) return
-
-    const ml = normToMeters(s.players.left.x, s.players.left.y)
-    const mr = normToMeters(s.players.right.x, s.players.right.y)
-    const mid = courtToWorld((ml.xM + mr.xM) / 2, (ml.yM + mr.yM) / 2)
-
-    let sw: THREE.Vector3
-    let cx: number
-    let cz: number
-    if (this.opts.spectator) {
-      sw = mid
-      cx = sw.x * 0.82 + this.ball.position.x * 0.18 + 0.9
-      cz = sw.z - 14
-    } else {
-      const self = normToMeters(
-        this.opts.mySide === 'left' ? s.players.left.x : s.players.right.x,
-        this.opts.mySide === 'left' ? s.players.left.y : s.players.right.y,
-      )
-      sw = courtToWorld(self.xM, self.yM)
-      const behind = this.opts.mySide === 'left' ? 13 : -13
-      cx = sw.x + 1.2
-      cz = sw.z + behind
-    }
-
-    const lookY = 2.2
-    const alongCourt = this.opts.mySide === 'left' ? -1 : 1
-
-    /** Пока в гейме подаёт соперник: весь розыгрыш в фазе `playing` тоже идёт с мячом в полёте — без фиксации камера снова уводит за мячом. */
-    const staticOpponentServiceFraming =
-      !this.opts.spectator && s.serving !== this.opts.mySide && s.phase !== 'over'
-
-    if (staticOpponentServiceFraming) {
-      this.idealCamPos.set(cx, 16, cz)
-      this.idealCamLook.set(sw.x, lookY, sw.z + alongCourt * 9)
-      this.camSmoothPos.copy(this.idealCamPos)
-      this.camSmoothLook.copy(this.idealCamLook)
-    } else {
-      this.idealCamPos.set(cx, 13.5, cz)
-      const bx = this.ball.position.x
-      const bz = this.ball.position.z
-      const tx = bx * 0.42 + sw.x * 0.58
-      const tz = bz * 0.42 + sw.z * 0.58
-      this.idealCamLook.set(tx, lookY, tz)
-
-      const ac = 1 - Math.exp(-3.4 * dt)
-      if (this.camSmoothPos.distanceTo(this.idealCamPos) > 24) {
-        this.camSmoothPos.copy(this.idealCamPos)
-        this.camSmoothLook.copy(this.idealCamLook)
-      } else {
-        this.camSmoothPos.lerp(this.idealCamPos, ac)
-        this.camSmoothLook.lerp(this.idealCamLook, ac)
-      }
-    }
-
-    this.camera.position.copy(this.camSmoothPos)
-    this.camera.lookAt(this.camSmoothLook)
+  private updateCamera(): void {
+    applyStaticMatchCamera(this.camera)
   }
 
   private updateIndicatorAnimation(): void {
