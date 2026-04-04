@@ -258,6 +258,12 @@ FIREBASE_PRIVATE_KEY=...
 FIREBASE_CLIENT_EMAIL=...
 ```
 
+**Важно для деплоя в Docker (`docker-compose.prod.yml`):** процесс Node крутится **внутри контейнера** `server`. Для него `localhost` — это сам контейнер, а не PostgreSQL. В **`server/.env` на сервере** укажите хост **`postgres`** (имя сервиса в compose) и те же логин/пароль/имя БД, что в корневом `.env`:
+
+`DATABASE_URL=postgresql://POSTGRES_USER:POSTGRES_PASSWORD@postgres:5432/POSTGRES_DB`
+
+После правки перезапустите контейнер `server` и снова выполните миграции при необходимости.
+
 ### Настройка Firebase Auth (один раз)
 
 1. Открыть [Firebase Console](https://console.firebase.google.com/) → создать проект
