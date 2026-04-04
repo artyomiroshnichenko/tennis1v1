@@ -21,6 +21,7 @@ import {
 import {
   baselinePosition,
   clampPlayerToHalf,
+  clampReceiverDuringServe,
   halfForY,
   inDiagonalServiceTarget,
   inSinglesCourt,
@@ -96,14 +97,17 @@ export class MatchEngine {
 
   constructor(firstServer: Side) {
     this.score = createInitialScore(firstServer)
+    const lbp = baselinePosition('left')
+    const rbp = baselinePosition('right')
+    this.pl.x = lbp.x
+    this.pl.y = lbp.y
+    this.pr.x = rbp.x
+    this.pr.y = rbp.y
+    this.pl.dx = 0
+    this.pl.dy = 0
+    this.pr.dx = 0
+    this.pr.dy = 0
     const bp = baselinePosition(firstServer)
-    if (firstServer === 'left') {
-      this.pl.x = bp.x
-      this.pl.y = bp.y
-    } else {
-      this.pr.x = bp.x
-      this.pr.y = bp.y
-    }
     this.ball.x = bp.x
     this.ball.y = firstServer === 'left' ? bp.y - 0.4 : bp.y + 0.4
     this.ball.z = 1.1
@@ -140,6 +144,16 @@ export class MatchEngine {
   beginAfterPause(): PendingEmit {
     const srv = currentServer(this.score)
     this.resetBallAtServer(srv)
+    const lbp = baselinePosition('left')
+    const rbp = baselinePosition('right')
+    this.pl.x = lbp.x
+    this.pl.y = lbp.y
+    this.pr.x = rbp.x
+    this.pr.y = rbp.y
+    this.pl.dx = 0
+    this.pl.dy = 0
+    this.pr.dx = 0
+    this.pr.dy = 0
     this.phase = { k: 'serve_ready', server: srv, until: this.timeMs + SERVE_READY_TIMEOUT_MS }
     this.plState = 'idle'
     this.prState = 'idle'
@@ -148,10 +162,11 @@ export class MatchEngine {
     }
   }
 
-  private toWireBall(): { x: number; y: number; vx: number; vy: number } {
+  private toWireBall(): { x: number; y: number; z: number; vx: number; vy: number } {
     return {
       x: this.ball.x / COURT_W,
       y: this.ball.y / COURT_L,
+      z: this.ball.z,
       vx: this.ball.vx / COURT_W,
       vy: this.ball.vy / COURT_L,
     }
@@ -434,14 +449,39 @@ export class MatchEngine {
   }
 
   private integratePlayers(dt: number): void {
+    const ph = this.phase
+    const serveSnap =
+      ph.k === 'serve_ready' || ph.k === 'serve_power' || ph.k === 'serve_aim'
+
     for (const s of ['left', 'right'] as const) {
       const st = s === 'left' ? this.plState : this.prState
       if (st === 'hitting' || st === 'serving') continue
       const p = this.playerBody(s)
+
+      if (serveSnap) {
+        const srv = ph.server
+        if (s === srv) {
+          const b = baselinePosition(srv)
+          p.x = b.x
+          p.y = b.y
+          p.dx = 0
+          p.dy = 0
+          continue
+        }
+        const n = norm(p.dx, p.dy)
+        const sp = PLAYER_SPEED * dt
+        const nx = p.x + n.x * sp
+        const ny = p.y + n.y * sp
+        const c = clampReceiverDuringServe(nx, ny, srv)
+        p.x = c.x
+        p.y = c.y
+        continue
+      }
+
       const n = norm(p.dx, p.dy)
       const sp = PLAYER_SPEED * dt
-      let nx = p.x + n.x * sp
-      let ny = p.y + n.y * sp
+      const nx = p.x + n.x * sp
+      const ny = p.y + n.y * sp
       const c = clampPlayerToHalf(nx, ny, s)
       p.x = c.x
       p.y = c.y

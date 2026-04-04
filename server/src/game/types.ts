@@ -16,7 +16,8 @@ export type Score = {
 }
 
 export type GameStateWire = {
-  ball: { x: number; y: number; vx: number; vy: number }
+  /** x,y,vx,vy — нормализованы по COURT_W / COURT_L; z — высота центра мяча, метры. */
+  ball: { x: number; y: number; z: number; vx: number; vy: number }
   players: {
     left: { x: number; y: number; state: PlayerState }
     right: { x: number; y: number; state: PlayerState }

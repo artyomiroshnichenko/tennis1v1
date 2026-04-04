@@ -17,7 +17,8 @@ export const BALL_RADIUS = 0.065
 export const HIT_REACH = 0.95
 export const GRAVITY = 12
 export const NET_CLEAR_Z = 0.42
-export const BALL_REST_Z = 0.01
+/** Высота центра мяча при касании корта (≈ радиус). */
+export const BALL_REST_Z = BALL_RADIUS
 
 /** Ожидание тапа «готов к подаче» (после чего открывается индикатор силы). */
 export const SERVE_READY_TIMEOUT_MS = 90_000

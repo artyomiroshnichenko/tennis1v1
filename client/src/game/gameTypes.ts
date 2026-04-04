@@ -16,7 +16,7 @@ export type Score = {
 }
 
 export type GameStateWire = {
-  ball: { x: number; y: number; vx: number; vy: number }
+  ball: { x: number; y: number; z: number; vx: number; vy: number }
   players: {
     left: { x: number; y: number; state: PlayerState }
     right: { x: number; y: number; state: PlayerState }

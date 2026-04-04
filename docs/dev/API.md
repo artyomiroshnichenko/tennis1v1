@@ -121,7 +121,7 @@ socket.emit('error', { code: string, message: string })
 | `room:countdown` | `{ seconds }` | Отсчёт перед стартом (15 сек) |
 | `room:closed` | — | Комната закрыта |
 | `game:start` | `{ initialState }` | Матч начался |
-| `game:state` | `{ ball, players, score, serving, phase }` | Состояние игры ~60fps; `phase` включает `serve_prep` (ожидание готовности подающего) |
+| `game:state` | `{ ball, players, score, serving, phase }` | Состояние игры ~60fps; `phase` включает `serve_prep` (ожидание готовности подающего); у `ball` поле `z` — высота мяча (м) |
 | `game:point` | `{ scorer, score, reason }` | Очко засчитано |
 | `game:serve:prompt` | `{ side }` | Приглашение выполнить подачу |
 | `game:indicator:show` | `{ phase: 'direction' \| 'power', forSide: 'left' \| 'right' }` | Показать индикатор только игроку `forSide` — клиент запускает анимацию; соперник событие игнорирует |
@@ -142,7 +142,8 @@ socket.emit('error', { code: string, message: string })
 
 ```typescript
 type GameState = {
-  ball: { x: number; y: number; vx: number; vy: number }
+  /** x,y,vx,vy — доли корта 0–1; z — высота центра мяча над плоскостью корта, метры */
+  ball: { x: number; y: number; z: number; vx: number; vy: number }
   players: {
     left: { x: number; y: number; state: PlayerState }
     right: { x: number; y: number; state: PlayerState }

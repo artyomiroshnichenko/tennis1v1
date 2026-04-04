@@ -847,7 +847,9 @@ export class MatchGame3D {
   private syncScene(s: GameStateWire): void {
     const bl = normToMeters(s.ball.x, s.ball.y)
     const bw = courtToWorld(bl.xM, bl.yM)
-    this.ballVisualTarget.set(bw.x, 0.88, bw.z)
+    const ballH =
+      typeof s.ball.z === 'number' && Number.isFinite(s.ball.z) ? s.ball.z : 0.88
+    this.ballVisualTarget.set(bw.x, ballH, bw.z)
     if (!this.ballTargetInitialized) {
       this.ball.position.copy(this.ballVisualTarget)
       this.ballGlow.position.copy(this.ballVisualTarget)

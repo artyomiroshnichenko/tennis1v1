@@ -72,3 +72,24 @@ export function baselinePosition(side: Side): { x: number; y: number } {
   if (side === 'left') return { x: COURT_W / 2, y: COURT_L - 1.1 }
   return { x: COURT_W / 2, y: 1.1 }
 }
+
+/**
+ * Приёмник на подаче: только между своей базовой линией и сервис-линией
+ * (не в чужом сервис-боксе и не у сетки).
+ */
+export function clampReceiverDuringServe(
+  x: number,
+  y: number,
+  server: Side,
+): { x: number; y: number } {
+  const margin = PLAYER_RADIUS + BALL_RADIUS
+  const x0 = margin
+  const x1 = COURT_W - margin
+  const cx = clamp(x, x0, x1)
+  if (server === 'left') {
+    const yMax = NET_Y - SERVICE_DEPTH - margin
+    return { x: cx, y: clamp(y, margin, yMax) }
+  }
+  const yMin = NET_Y + SERVICE_DEPTH + margin
+  return { x: cx, y: clamp(y, yMin, COURT_L - margin) }
+}
