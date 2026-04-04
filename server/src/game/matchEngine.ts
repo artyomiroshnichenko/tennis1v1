@@ -87,7 +87,6 @@ export class MatchEngine {
   bouncesL = 0
   bouncesR = 0
   serveFaults = 0
-  consecutiveServeTimeouts = 0
   rallySpeedCap = BALL_SPEED_MAX
   lastStrongHitBy: Side | null = null
   timeMs = 0
@@ -313,7 +312,6 @@ export class MatchEngine {
     this.serveInPlay = true
     this.setPlayerState(server, 'idle')
     this.phase = { k: 'rally' }
-    this.consecutiveServeTimeouts = 0
   }
 
   private fireGroundstroke(side: Side, dirT: number, power: number): void {
@@ -363,7 +361,7 @@ export class MatchEngine {
           out.push(next)
         }
       }
-      this.integratePlayers(dt)
+      this.freezePlayersNoIntegrate()
       return out
     }
     if (this.phase.k === 'sides_change') {
@@ -371,11 +369,11 @@ export class MatchEngine {
         const n = this.beginAfterPause()
         out.push(n)
       }
-      this.integratePlayers(dt)
+      this.freezePlayersNoIntegrate()
       return out
     }
     if (this.phase.k === 'done') {
-      this.integratePlayers(dt)
+      this.freezePlayersNoIntegrate()
       return out
     }
 
@@ -440,6 +438,14 @@ export class MatchEngine {
       return this.startHitSequence(side)
     }
     return null
+  }
+
+  /** Между очками и после матча — не интегрировать движение (иначе «ездим» на старом вводе к сетке). */
+  private freezePlayersNoIntegrate(): void {
+    this.pl.dx = 0
+    this.pl.dy = 0
+    this.pr.dx = 0
+    this.pr.dy = 0
   }
 
   private integratePlayers(dt: number): void {
@@ -578,10 +584,6 @@ export class MatchEngine {
   }
 
   private handleServeTimeout(server: Side): PendingEmit[] {
-    this.consecutiveServeTimeouts++
-    if (this.consecutiveServeTimeouts >= 2) {
-      return this.awardMatchLoss(server, 'Два подброса без удара')
-    }
     this.serveFaults++
     if (this.serveFaults >= 2) {
       return this.awardPoint(other(server), 'Таймаут подачи')
@@ -591,17 +593,12 @@ export class MatchEngine {
     return [{ event: 'fault', servePrompt: server }]
   }
 
-  private awardMatchLoss(loser: Side, reason: string): PendingEmit[] {
-    const w = other(loser)
-    this.phase = { k: 'done', winner: w }
-    return [{ over: { winner: w, reason } }]
-  }
-
   awardPoint(winner: Side, reason: string): PendingEmit[] {
     const res = addPoint(this.score, winner)
     const out: PendingEmit[] = [{ point: { scorer: winner, reason }, event: mapReasonToEvent(reason) }]
     this.serveFaults = 0
     this.serveInPlay = false
+    this.freezePlayersNoIntegrate()
     this.lastStrongHitBy = null
     this.rallySpeedCap = BALL_SPEED_MAX
     if (res.matchOver) {
