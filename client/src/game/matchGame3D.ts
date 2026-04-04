@@ -10,6 +10,11 @@ import {
 } from './courtConstants'
 import type { GameStateWire, Score, Side } from './gameTypes'
 import { matchAudio } from './matchAudio'
+import {
+  createHardCourtSurfaceTexture,
+  createNetGridTexture,
+  createOuterGrassTexture,
+} from './courtVisuals'
 
 export type MatchSceneOpts = {
   socket: Socket
@@ -188,6 +193,8 @@ export class MatchGame3D {
   private servePrepBlockingInput = false
 
   private scalePx = 1
+  /** CanvasTexture корта/сетки — dispose при destroy */
+  private disposableTextures: THREE.Texture[] = []
 
   constructor(parentId: string, opts: MatchSceneOpts) {
     this.parentId = parentId
@@ -281,15 +288,27 @@ export class MatchGame3D {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.02
 
     this.scene = new THREE.Scene()
-    this.scene.background = new THREE.Color(0x3a6042)
+    this.scene.background = new THREE.Color(0x34563f)
 
     this.camera = new THREE.PerspectiveCamera(48, w / h, 0.1, 220)
     this.camera.position.set(0, 16, 18)
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55))
-    const sun = new THREE.DirectionalLight(0xfff5e6, 1.05)
+    const texGrass = createOuterGrassTexture()
+    const texCourt = createHardCourtSurfaceTexture()
+    const texNet = createNetGridTexture()
+    const maxAniso = this.renderer.capabilities.getMaxAnisotropy()
+    for (const t of [texGrass, texCourt, texNet]) {
+      t.anisotropy = Math.min(8, maxAniso)
+      this.disposableTextures.push(t)
+    }
+
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.4))
+    this.scene.add(new THREE.HemisphereLight(0xc8dce8, 0x2a4530, 0.32))
+    const sun = new THREE.DirectionalLight(0xfff5e6, 1.02)
     sun.position.set(-8, 28, 12)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
@@ -304,8 +323,18 @@ export class MatchGame3D {
     this.courtRoot = new THREE.Group()
     this.scene.add(this.courtRoot)
 
-    const green = new THREE.MeshStandardMaterial({ color: 0x5aaf5a, roughness: 0.85 })
-    const blue = new THREE.MeshStandardMaterial({ color: 0x1a6cb5, roughness: 0.72 })
+    const green = new THREE.MeshStandardMaterial({
+      map: texGrass,
+      color: 0xffffff,
+      roughness: 0.88,
+      metalness: 0,
+    })
+    const blue = new THREE.MeshStandardMaterial({
+      map: texCourt,
+      color: 0xffffff,
+      roughness: 0.68,
+      metalness: 0,
+    })
 
     const gPlane = new THREE.Mesh(new THREE.PlaneGeometry(COURT_W_DOUBLE, COURT_L), green)
     gPlane.rotation.x = -Math.PI / 2
@@ -323,22 +352,31 @@ export class MatchGame3D {
     const lines = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ color: 0xf8f8ff }))
     this.courtRoot.add(lines)
 
+    const netW = COURT_W_DOUBLE * 0.992
+    const netH = 0.9
     const netMat = new THREE.MeshStandardMaterial({
-      color: 0xf0f0f8,
+      map: texNet,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.92,
-      roughness: 0.35,
+      alphaTest: 0.08,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      roughness: 0.42,
+      metalness: 0.04,
     })
-    const net = new THREE.Mesh(new THREE.BoxGeometry(COURT_W_DOUBLE, 0.95, 0.07), netMat)
-    net.position.set(0, 0.48, 0)
-    net.castShadow = true
-    this.courtRoot.add(net)
-    const netMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(COURT_W_DOUBLE * 0.98, 0.55, 0.02),
-      new THREE.MeshStandardMaterial({ color: 0x3a3a44, transparent: true, opacity: 0.35 }),
-    )
-    netMesh.position.set(0, 0.52, 0)
-    this.courtRoot.add(netMesh)
+    const netPlane = new THREE.Mesh(new THREE.PlaneGeometry(netW, netH), netMat)
+    netPlane.position.set(0, 0.45, 0)
+    this.courtRoot.add(netPlane)
+
+    const tapeMat = new THREE.MeshStandardMaterial({
+      color: 0xf5f6fc,
+      roughness: 0.38,
+      metalness: 0.02,
+    })
+    const tape = new THREE.Mesh(new THREE.BoxGeometry(netW, 0.052, 0.042), tapeMat)
+    tape.position.set(0, 0.45 + netH / 2 + 0.024, 0)
+    tape.castShadow = true
+    this.courtRoot.add(tape)
 
     this.plLeft = makePlayerFigure(0xffd54a, 0x1a1a22)
     this.plRight = makePlayerFigure(0xe53935, 0x1a1a22)
@@ -1055,6 +1093,8 @@ export class MatchGame3D {
     this.indicatorBar = null
     this.indicatorArrowWrap = null
     this.indicatorArrowEl = null
+    for (const t of this.disposableTextures) t.dispose()
+    this.disposableTextures.length = 0
     this.renderer.dispose()
     this.root.remove()
   }
